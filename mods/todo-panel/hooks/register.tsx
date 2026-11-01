@@ -7,7 +7,7 @@ const TODO_PATH = 'docs/todo.md'
 const POLL_MS = 2000
 const CURRENT_SECTION = '现在'
 const MUTED_SECTIONS = ['backlog', '待定']
-const TEMPLATE = '## 现在\n\n## 接下来\n\n## Backlog\n\n## 待定\n'
+const TEMPLATE = '## 现在\n\n## 接下来\n\n## Backlog\n\n## 待定\n\n## 问题\n'
 // A theme key, not a fixed hex, so the one accent follows light and dark.
 const ACCENT = 'suggestion'
 const SPACING = {
@@ -143,11 +143,12 @@ const ruleFor = (path: string) =>
   [
     `# 项目待办清单`,
     `本项目的待办清单在 ${path}，所有对话共用，用户在面板上实时看它。`,
-    `分四组：## 现在、## 接下来、## Backlog、## 待定；每条写成 "- [ ] 事项"。`,
+    `分五组：## 现在、## 接下来、## Backlog、## 待定、## 问题；每条写成 "- [ ] 事项"。`,
     `- 对话开始时看一下清单，知道现在在做什么。`,
-    `- 出现新事项（发现 bug、用户提了新想法或决定）就写进去：明确要做的放「接下来」，拿不准的放「待定」，决定以后再说的放「Backlog」。`,
+    `- 出现新事项（用户提了新想法或决定）就写进去：明确要做的放「接下来」，拿不准的放「待定」，决定以后再说的放「Backlog」。`,
+    `- 发现 bug 或还没解决的问题放「问题」，解决后改成 "- [x]"。`,
     `- 开始做某件事时移到「现在」，做完改成 "- [x]"，决定不做就删掉那一行。`,
-    `- 文件不存在时，第一次出现待办就按这四组建好它。`,
+    `- 文件不存在时，第一次出现待办就按这五组建好它；已有文件缺「问题」组时，要写问题再加上。`,
     `- 每次只改相关的行，改之前先重新读文件，别的对话可能刚改过。`,
   ].join('\n')
 

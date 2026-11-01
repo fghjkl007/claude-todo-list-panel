@@ -32,7 +32,7 @@ claude plugin install todo-panel --marketplace fghjkl007/claude-todo-list-panel
 | 操作 | 方式 |
 |---|---|
 | 打开或关闭面板 | `/todo` |
-| 没有清单时创建 | `/todo`，会在 `docs/todo.md` 建好四组模板 |
+| 没有清单时创建 | `/todo`，会在 `docs/todo.md` 建好五组模板 |
 | 让对话记一条 | 直接说「记一下，X 要做」 |
 | 用快捷键关闭（CLI） | `ctrl+x x` |
 
@@ -53,6 +53,9 @@ claude plugin install todo-panel --marketplace fghjkl007/claude-todo-list-panel
 
 ## 待定
 - [ ] 拿不准要不要做的事
+
+## 问题
+- [ ] 发现的 bug 或还没解决的问题
 ```
 
 手写的 `- 事项` 也会显示成未完成项。
