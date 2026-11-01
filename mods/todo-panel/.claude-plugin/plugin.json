@@ -1,0 +1,6 @@
+{
+  "name": "todo-panel",
+  "version": "0.1.0",
+  "description": "A pane beside the chat showing the project's docs/todo.md, kept up to date by every conversation",
+  "types": "./types/index.d.ts"
+}

@@ -1,0 +1,8 @@
+.DS_Store
+*.log
+.mcpb-cache/
+.claude-plugin/types/
+mods/todo-panel/.claude-plugin/types/
+# This project's own working notes, not part of the mod.
+docs/
+DELIVERY_REPORT.md

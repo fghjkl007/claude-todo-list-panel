@@ -1,0 +1,11 @@
+{
+  "name": "claude-todo-list-panel",
+  "owner": { "name": "fghjkl007" },
+  "plugins": [
+    {
+      "name": "todo-panel",
+      "source": "./mods/todo-panel",
+      "description": "项目待办面板：所有对话共用 docs/todo.md，实时显示"
+    }
+  ]
+}
