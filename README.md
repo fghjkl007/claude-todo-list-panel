@@ -1,86 +1,91 @@
 # Todo Panel
 
-Claude Code 的项目待办面板。同一个项目的所有对话共用一份 `docs/todo.md`，面板放在聊天旁边，文件一变，面板约 2 秒内跟着更新。CLI 和桌面版用的是同一个 mod。
+A project todo pane for Claude Code. Every conversation in a project shares one `docs/todo.md`, the pane sits beside the chat, and it follows the file within about 2 seconds of a change. The CLI and the desktop app run the same mod.
 
-## 功能
+## Features
 
-- **五个分组：** 现在、接下来、Backlog、待定、问题。「现在」用强调色，Backlog 和待定变暗，已完成项显示 `✓` 并划线。
-- **多对话共用：** 同一项目的对话读写同一个文件；在 git worktree 里也读写主工作区那一份。
-- **对话自动维护：** 每个对话都会收到维护规则和当前清单，出现新事项就记，做完就打勾。
-- **格式检查：** 对话用 Write 或 Edit 写入缺 `[ ]` 的条目时会被拒绝并提示改正。
+- **Six groups:** Now, Next, Backlog, Maybe, Issues and Ideas. "Now" uses the accent color, Backlog and Maybe are dimmed, and finished items show `✓` and are struck through.
+- **Shared across conversations:** every conversation in a project reads and writes the same file; in a git worktree they use the main worktree's copy.
+- **Kept up to date by the conversations:** each conversation gets the upkeep rules and the current list, adds new items as they come up, and checks them off when they are done.
+- **Format check:** an entry missing its `[ ]`, written with Write or Edit, is refused with a note on how to fix it.
 
-## 安装
+## Install
 
-需要支持 mod 的 Claude Code，已在 2.1.316 上测试。在终端会话的提示符处输入：
+Needs a Claude Code version that supports mods; tested on 2.1.316. At the prompt of a terminal session, type:
 
 ```
 /plugin install todo-panel --marketplace fghjkl007/claude-todo-list-panel
 ```
 
-依次回答：输入 `y` 添加 marketplace，再按 Enter 选择用户级安装。
+Then answer the prompts: type `y` to add the marketplace, and press Enter to install for your user.
 
-也可以在 shell 里安装：
+Or install from the shell:
 
 ```bash
 claude plugin install todo-panel --marketplace fghjkl007/claude-todo-list-panel
 ```
 
-桌面版不能运行 `/plugin`：点提示框旁的 **+**，选 **Plugins**，**Add marketplace** 填 `fghjkl007/claude-todo-list-panel`，再点 **Add plugin**。用终端按用户级安装后，桌面版的本地会话也会加载。
+The desktop app cannot run `/plugin`: click **+** next to the prompt box, choose **Plugins**, enter `fghjkl007/claude-todo-list-panel` under **Add marketplace**, then click **Add plugin**. Once installed for your user from a terminal, the desktop app's local sessions load it too.
 
-## 使用
+## Usage
 
-| 操作 | 方式 |
+| To | Do |
 |---|---|
-| 打开或关闭面板 | `/todo` |
-| 没有清单时创建 | `/todo`，会在 `docs/todo.md` 建好五组模板 |
-| 让对话记一条 | 直接说「记一下，X 要做」 |
-| 用快捷键关闭（CLI） | `ctrl+x x` |
+| Open or close the pane | `/todo` |
+| Create a list when there is none | `/todo`, which writes the six-group template to `docs/todo.md` |
+| Have the conversation add an item | Just say "note that we need to do X" |
+| Close it with a shortcut (CLI) | `ctrl+x x` |
 
-项目里已有清单时，新会话会自动打开面板。终端宽度不足 144 列时不会自动显示，输入 `/todo` 即可打开。
+When a project already has a list, new sessions open the pane on their own. A terminal narrower than 144 columns does not show it automatically; type `/todo` to open it.
 
-## 清单格式
+## List format
 
 ```markdown
-## 现在
-- [ ] 正在做的事
-- [x] 做完的事
+## Now
+- [ ] What is being worked on
+- [x] What is done
 
-## 接下来
-- [ ] 明确要做的事
+## Next
+- [ ] Confirmed work that has not started yet
 
 ## Backlog
-- [ ] 决定以后再说的事
+- [ ] Worth doing, but left for later
 
-## 待定
-- [ ] 拿不准要不要做的事
+## Maybe
+- [ ] Not yet decided whether to do it
 
-## 问题
-- [ ] 发现的 bug 或还没解决的问题
+## Issues
+- [ ] A bug found or a problem not yet solved
+
+## Ideas
+- [ ] An unverified idea, recorded as stated
 ```
 
-手写的 `- 事项` 也会显示成未完成项。
+A hand-written `- item` also shows as an open item.
 
-## 工作原理
+Lists made by earlier versions use the Chinese headings 现在, 接下来, Backlog, 待定, 问题 and 新想法. They still display, with 现在 accented and 待定 dimmed, and conversations keep those headings instead of adding English ones.
 
-没有后台程序，也不用改 `settings.json`。全部逻辑在 [`mods/todo-panel/hooks/register.tsx`](mods/todo-panel/hooks/register.tsx) 里，用 mod 的 hook 实现：
+## How it works
 
-| 事件 | 作用 |
+There is no background process and no change to `settings.json`. All the logic is in [`mods/todo-panel/hooks/register.tsx`](mods/todo-panel/hooks/register.tsx), built on the mod's hooks:
+
+| Event | What it does |
 |---|---|
-| `session.start` | 注册 `/todo`，读取清单，每 2 秒检查文件变化 |
-| `command.run` | 响应 `/todo`：打开或关闭面板，必要时创建清单 |
-| `prompt.compose` | 把维护规则加进系统提示 |
-| `prompt.context` | 把当前清单带给对话 |
-| `tool.call` | 检查写入 `docs/todo.md` 的内容格式 |
-| `ui.render` | 按界面（终端、桌面、VS Code、手机）绘制面板 |
+| `session.start` | Registers `/todo`, reads the list, and checks the file for changes every 2 seconds |
+| `command.run` | Handles `/todo`: opens or closes the pane, creating the list if needed |
+| `prompt.compose` | Adds the upkeep rules to the system prompt |
+| `prompt.context` | Gives the conversation the current list |
+| `tool.call` | Checks the format of what is written to `docs/todo.md` |
+| `ui.render` | Draws the pane for each surface (terminal, desktop, VS Code, mobile) |
 
-## 已知限制
+## Known limits
 
-- **自动维护不是强制的：** 它靠给对话的规则，对话可能漏记或忘记打勾。
-- **格式检查有范围：** 只检查 Write 和 Edit 写入的 `-` 或 `*` 开头的条目；Bash 写入、手动编辑和普通文字行都不拦。
-- **面板只读：** 改内容要改文件，或者告诉对话。
-- **API 可能变化：** mod API 还处于早期阶段，Claude Code 升级后可能需要调整。
+- **Upkeep is not enforced:** it relies on rules given to the conversation, which may miss an item or forget to check one off.
+- **The format check is narrow:** it only checks entries starting with `-` or `*` written by Write and Edit; writes from Bash, hand edits and plain text lines are not checked.
+- **The pane is read-only:** to change the list, edit the file or tell the conversation.
+- **The API may change:** the mod API is still early, and a Claude Code update may need changes here.
 
-## 开发
+## Development
 
 ```bash
 claude plugin test mods/todo-panel
@@ -90,4 +95,4 @@ claude plugin test mods/todo-panel
 claude plugin validate mods/todo-panel
 ```
 
-用 `claude --plugin-dir mods/todo-panel` 可以直接从文件夹运行这个 mod。
+Run the mod straight from its folder with `claude --plugin-dir mods/todo-panel`.

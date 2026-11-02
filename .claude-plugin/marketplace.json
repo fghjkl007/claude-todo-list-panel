@@ -5,7 +5,7 @@
     {
       "name": "todo-panel",
       "source": "./mods/todo-panel",
-      "description": "项目待办面板：所有对话共用 docs/todo.md，实时显示"
+      "description": "A project todo pane: every conversation shares docs/todo.md, shown live beside the chat"
     }
   ]
 }

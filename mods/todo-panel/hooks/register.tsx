@@ -2,12 +2,13 @@ import { atom, read, update } from 'claude-code'
 import type { Elements, Register, Space } from 'claude-code'
 
 const PANE = 'todo-panel'
-const TITLE = '待办'
+const TITLE = 'Todo'
 const TODO_PATH = 'docs/todo.md'
 const POLL_MS = 2000
-const CURRENT_SECTION = '现在'
-const MUTED_SECTIONS = ['backlog', '待定']
-const TEMPLATE = '## 现在\n\n## 接下来\n\n## Backlog\n\n## 待定\n\n## 问题\n'
+// Lists made before the headings were English use the Chinese names, so both count.
+const CURRENT_SECTIONS = ['now', '现在']
+const MUTED_SECTIONS = ['backlog', 'maybe', '待定']
+const TEMPLATE = '## Now\n\n## Next\n\n## Backlog\n\n## Maybe\n\n## Issues\n\n## Ideas\n'
 // A theme key, not a fixed hex, so the one accent follows light and dark.
 const ACCENT = 'suggestion'
 const SPACING = {
@@ -72,17 +73,17 @@ export const groupTodo = (lines: TodoLine[]): TodoGroup[] =>
     }, [])
     .map(group => ({ ...group, openCount: group.lines.filter(isOpen).length }))
 
-const isMuted = (section: string) =>
-  MUTED_SECTIONS.includes(section.trim().toLowerCase())
+const isNamed = (names: readonly string[], section: string) =>
+  names.includes(section.trim().toLowerCase())
 
 type Ui = Pick<Elements['desktop'], 'Box' | 'Text'>
 
 const withoutBackticks = (text: string) => text.replaceAll('`', '')
 
 const drawLine = ({ Box, Text }: Ui, line: BodyLine, title: string, markGap: Space) => {
-  const isCurrent = title === CURRENT_SECTION
+  const isCurrent = isNamed(CURRENT_SECTIONS, title)
   const isDone = line.kind === 'item' && line.isDone
-  const isDim = isDone || isMuted(title)
+  const isDim = isDone || isNamed(MUTED_SECTIONS, title)
   const text = withoutBackticks(line.text)
   if (line.kind === 'text') return <Text dimColor={isDim}>{text}</Text>
 
@@ -106,8 +107,8 @@ const drawLine = ({ Box, Text }: Ui, line: BodyLine, title: string, markGap: Spa
 
 const drawGroup = (ui: Ui, group: TodoGroup, itemGap: Space, markGap: Space) => {
   const { Box, Text } = ui
-  const isCurrent = group.title === CURRENT_SECTION
-  const isDim = isMuted(group.title)
+  const isCurrent = isNamed(CURRENT_SECTIONS, group.title)
+  const isDim = isNamed(MUTED_SECTIONS, group.title)
 
   return (
     <Box flexDirection="column" gap={itemGap}>
@@ -130,7 +131,7 @@ const drawGroup = (ui: Ui, group: TodoGroup, itemGap: Space, markGap: Space) => 
       )}
       {group.lines.length === 0 ? (
         <Text size="footnote" dimColor>
-          暂无
+          Nothing yet
         </Text>
       ) : (
         group.lines.map(line => drawLine(ui, line, group.title, markGap))
@@ -141,15 +142,22 @@ const drawGroup = (ui: Ui, group: TodoGroup, itemGap: Space, markGap: Space) => 
 
 const ruleFor = (path: string) =>
   [
-    `# 项目待办清单`,
-    `本项目的待办清单在 ${path}，所有对话共用，用户在面板上实时看它。`,
-    `分五组：## 现在、## 接下来、## Backlog、## 待定、## 问题；每条写成 "- [ ] 事项"。`,
-    `- 对话开始时看一下清单，知道现在在做什么。`,
-    `- 出现新事项（用户提了新想法或决定）就写进去：明确要做的放「接下来」，拿不准的放「待定」，决定以后再说的放「Backlog」。`,
-    `- 发现 bug 或还没解决的问题放「问题」，解决后改成 "- [x]"。`,
-    `- 开始做某件事时移到「现在」，做完改成 "- [x]"，决定不做就删掉那一行。`,
-    `- 文件不存在时，第一次出现待办就按这五组建好它；已有文件缺「问题」组时，要写问题再加上。`,
-    `- 每次只改相关的行，改之前先重新读文件，别的对话可能刚改过。`,
+    `# Project todo list`,
+    `This project's todo list is ${path}. Every conversation shares it, and the user watches it live in a pane.`,
+    `Write each entry as "- [ ] item", saying what it is and why it matters, clearly enough for someone who has not read the conversation. Use six groups:`,
+    `- ## Now: what is being worked on.`,
+    `- ## Next: confirmed work that has not started yet.`,
+    `- ## Backlog: confirmed as worth doing, but deliberately left for later.`,
+    `- ## Maybe: understood, but not yet decided whether to do it.`,
+    `- ## Issues: bugs found or problems not yet solved; change to "- [x]" once solved.`,
+    `- ## Ideas: unverified ideas, recorded as stated and not treated as confirmed; once checked, move to "Next" if it will be done, or delete it if not.`,
+    `How to keep it up to date:`,
+    `- At the start of a conversation, read the list to see what is in progress.`,
+    `- When a new item or decision comes up, write it into the group that fits the definitions above.`,
+    `- Move an item to "Now" when starting it, change it to "- [x]" when done, and delete the line if it is dropped.`,
+    `- If the file does not exist, create it with these six groups the first time an item comes up; if an existing file lacks a group, add the group when there is something to write in it.`,
+    `- Lists made by older versions use Chinese headings (现在, 接下来, Backlog, 待定, 问题, 新想法 for Now, Next, Backlog, Maybe, Issues, Ideas); keep a file's existing headings rather than adding English duplicates.`,
+    `- Change only the relevant lines, and re-read the file before each change: another conversation may have just edited it.`,
   ].join('\n')
 
 // Main worktree, so every worktree's session shows the same list.
@@ -177,13 +185,13 @@ export const register: Register = on => {
     const bad = findUncheckedLines(e.tool === 'Write' ? e.content : e.new_string)
     if (bad.length === 0) return next(e)
 
-    return { deny: `待办要写成 "- [ ] 事项"，这几行不合格式：\n${bad.join('\n')}` }
+    return { deny: `Todo entries must be written as "- [ ] item". These lines are not:\n${bad.join('\n')}` }
   })
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'todo',
-      description: '打开或关闭待办面板，没有 docs/todo.md 时先创建',
+      description: 'Open or close the todo pane, creating docs/todo.md first if there is none',
     })
     const path = await resolvePath($)
     let last = await readTodo($, path)
@@ -215,7 +223,7 @@ export const register: Register = on => {
     const isDrawn = (await $.ui.panes()).some(pane => pane.id === PANE && pane.isPlaced)
     if (isDrawn) {
       await $.ui.close({ id: PANE })
-      return { text: '待办面板已关闭' }
+      return { text: 'Todo pane closed' }
     }
 
     const path = await resolvePath($)
@@ -224,7 +232,7 @@ export const register: Register = on => {
     await update($, todoText, () => existing ?? TEMPLATE)
     await $.ui.open({ id: PANE, title: TITLE })
 
-    return { text: existing === null ? `已创建 ${path}` : '待办面板已打开' }
+    return { text: existing === null ? `Created ${path}` : 'Todo pane opened' }
   })
 
   on('prompt.compose', async ($, e, next) => {
@@ -250,7 +258,7 @@ export const register: Register = on => {
     const { Box, Text } = $.ui.resolve(e)
     const text = await read($, todoText)
     if (text === null) {
-      return <Text dimColor>还没有清单，输入 /todo 创建。</Text>
+      return <Text dimColor>No list yet. Type /todo to create one.</Text>
     }
 
     const space = e.surface === 'terminal' ? SPACING.terminal : SPACING.graphical
