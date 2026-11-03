@@ -1,7 +1,7 @@
 import type { UiPane } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
-import { findUncheckedLines, groupTodo, parseTodo } from './register'
+import { findUncheckedLines, groupTodo, parseTodo, splitItem } from './register'
 
 const PANE = {
   plugin: 'todo-panel',
@@ -45,6 +45,54 @@ test('groupTodo counts open items and keeps empty groups', async () => {
     ['Now', 1, 2],
     ['Maybe', 0, 0],
   ])
+})
+
+test('splitItem takes the detail after the first colon or dash as a caption', async () => {
+  expect(splitItem('worktree 验收：显示主工作区那份')).toEqual({ title: 'worktree 验收', caption: '显示主工作区那份' })
+  expect(splitItem('release ticket: DARE-1 DARE-2')).toEqual({ title: 'release ticket', caption: 'DARE-1 DARE-2' })
+  expect(splitItem('ship it — before Friday: no later')).toEqual({ title: 'ship it', caption: 'before Friday: no later' })
+  expect(splitItem(' ：x — y')).toEqual({ title: '：x', caption: 'y' })
+})
+
+test('splitItem leaves a title whole when no detail follows a separator', async () => {
+  for (const text of ['see https://x.io at 10:30', '：only detail', 'ends with a colon:', 'plain item']) {
+    expect(splitItem(text)).toEqual({ title: text })
+  }
+})
+
+const textOf = (text: string) => () => ({
+  value: { value: { shape: 'text-1', value: text }, version: 1 },
+})
+
+test('on the terminal each open item is a card with its detail beneath, done items after as plain lines', async ($, on) => {
+  on('state.get', textOf('## Now\n- [x] done B\n- [ ] do A：why it matters\n## Maybe\n- [ ] park C\n'))
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const cards = (await ui.findAll({ type: 'Box' })).filter(box => box.props.borderStyle === 'round')
+  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+
+  expect(cards.map(card => card.text)).toEqual(['○do Awhy it matters', '○park C'])
+  expect((await ui.find({ type: 'Text', text: /^do A$/ }))?.text).toBe('do A')
+  expect((await ui.find({ type: 'Text', text: /^why it matters$/ }))?.props.dimColor).toBe(true)
+  expect(texts.indexOf('do A')).toBeLessThan(texts.indexOf('done B'))
+  expect((await ui.find({ type: 'Text', text: /^done B$/ }))?.props.strikethrough).toBe(true)
+  expect(cards[0]?.props.borderColor).toBe('claude')
+  expect(cards[0]?.props.borderDimColor).toBe(false)
+  expect(cards[1]?.props.borderDimColor).toBe(true)
+  await ui.unmount()
+})
+
+test('graphical surfaces keep the plain list, in file order and with no cards', async ($, on) => {
+  on('state.get', textOf('## Now\n- [x] done B\n- [ ] do A：why it matters\n'))
+
+  for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    const boxes = await ui.findAll({ type: 'Box' })
+    const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+
+    expect(boxes.some(box => box.props.borderStyle !== undefined)).toBe(false)
+    expect(texts.indexOf('done B')).toBeLessThan(texts.indexOf('do A：why it matters'))
+    await ui.unmount()
+  }
 })
 
 test('/todo closes a drawn pane and opens one that is closed or waiting undrawn', async ($, on) => {
@@ -136,10 +184,32 @@ test('the current group is accented and parked ones dimmed, under English or old
 
   for (const [current, parked] of [['Now', 'Maybe'], ['现在', '待定']]) {
     text = `## ${current}\n- [ ] A\n## ${parked}\n- [ ] B\n`
-    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    for (const [surface, accent] of [['terminal', 'claude'], ['desktop', 'suggestion']] as const) {
+      const ui = await $.ui.mount({ ...PANE, surface })
 
-    expect((await ui.find({ type: 'Text', text: new RegExp(`^${current}$`) }))?.props.color).toBe('suggestion')
-    expect((await ui.find({ type: 'Text', text: new RegExp(`^${parked}$`) }))?.props.dimColor).toBe(true)
+      expect((await ui.find({ type: 'Text', text: new RegExp(`^${current}$`) }))?.props.color).toBe(accent)
+      expect((await ui.find({ type: 'Text', text: new RegExp(`^${parked}$`) }))?.props.dimColor).toBe(true)
+      await ui.unmount()
+    }
+  }
+})
+
+test('on the terminal headers and marks take their group color, and done marks are green', async ($, on) => {
+  let text = ''
+  on('state.get', () => ({ value: { value: { shape: 'text-1', value: text }, version: 1 } }))
+
+  for (const names of [['Now', 'Issues', 'Ideas', 'Next'], ['现在', '问题', '新想法', '接下来']]) {
+    const [now, issues, ideas, next] = names
+    text = `## ${now}\n- [ ] A\n- [x] B\n## ${issues}\n- [ ] C\n## ${ideas}\n- [ ] D\n## ${next}\n- [ ] E\n`
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const headerColors = await Promise.all(
+      names.map(async name => (await ui.find({ type: 'Text', text: new RegExp(`^${name}$`) }))?.props.color),
+    )
+    const markColors = (await ui.findAll({ type: 'Text', text: /^○$/ })).map(mark => mark.props.color)
+
+    expect(headerColors).toEqual(['claude', 'error', 'merged', undefined])
+    expect(markColors).toEqual(['claude', 'error', 'merged', undefined])
+    expect((await ui.find({ type: 'Text', text: /^✓$/ }))?.props.color).toBe('success')
     await ui.unmount()
   }
 })

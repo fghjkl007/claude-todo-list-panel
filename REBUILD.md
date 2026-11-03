@@ -84,9 +84,10 @@ The rules are the whole "automatic upkeep" mechanism, so their wording matters:
 
 ### Look (Google Tasks style, flat)
 
-- Only **Now** uses the accent, and the accent is the theme key `suggestion`, not a fixed hex, so it follows light and dark themes.
+- **Theme keys only, never hex colors**, so every color follows light and dark themes. On graphical surfaces only **Now** uses the accent, the theme key `suggestion`.
 - Each group header shows its **open item count** on the right (tabular digits, dimmed), hidden when zero.
-- Marks: `●` for open items in Now, `○` for other open items, `✓` for done. Done items are dimmed and struck through.
+- Marks on graphical surfaces: `●` for open items in Now, `○` for other open items, `✓` for done. Done items are dimmed and struck through.
+- **Terminal cards (Microsoft To Do style):** in the CLI each open item is a rounded-border card: a `○`, the title, and, when the item has a `：`, `: ` or ` — ` after some text, everything after the first one as a dimmer caption beneath. **Quiet cards (style B, chosen from three mockups):** every card border is gray (`borderDimColor`) except Now's, which use `claude`. Group headers are bold and, like the `○` marks, take the group's color: Now/现在 `claude`, Issues/问题 `error`, Ideas/新想法 `merged`, the others the default text color; Backlog and Maybe (待定) dim the header, `○` and title. Done items are not cards: they follow the group's open cards as a `✓` in `success` with the text dimmed and struck through, indented 2 columns so `✓` sits under each card's `○`. No `+` on the right as in To Do: the pane has no action behind it. Graphical surfaces keep the flat list in file order.
 - Backlog and Maybe are dimmed as a whole (title and items).
 - An empty group shows `Nothing yet`.
 - **The mark never touches the text:** mark and text sit in a row with a gap (1 column in the terminal, `xs` on graphical surfaces). An early version had them touching in the CLI.
@@ -137,7 +138,7 @@ claude plugin validate mods/todo-panel
 claude plugin validate .
 ```
 
-Expected: 8 tests pass. Validation passes with two existing warnings (no `author` in `plugin.json`, no marketplace `description`).
+Expected: 13 tests pass. Validation passes with two existing warnings (no `author` in `plugin.json`, no marketplace `description`).
 
 Lessons from writing the tests:
 
@@ -180,7 +181,7 @@ For a rebuilt copy, point the marketplace at your own repo or local folder inste
 **Issues**
 
 - **Prompt hooks skipped by another plugin.** In one desktop session the app reported that todo-panel's `prompt.compose` and `prompt.context` hooks were skipped because `cc-plugin-sec-default` ran first and passed the event on past it. `cc-plugin-sec-default` is not in the user's settings or installed plugins, so it is probably built into or managed by the app. When this happens, conversations get neither the rules nor the list, and upkeep stops. Cause not investigated.
-- **Multi-line items:** the mark is vertically centered against a wrapped item; it should align to the top line.
+- **Multi-line items (graphical surfaces):** the mark is vertically centered against a wrapped item; it should align to the top line. The terminal cards already put `○` on the first line.
 
 **Not yet verified in a real session**
 
@@ -259,7 +260,7 @@ declare module 'claude-code' {
 
 ````tsx
 import { atom, read, update } from 'claude-code'
-import type { Elements, Register, Space } from 'claude-code'
+import type { Color, Elements, Register, Space } from 'claude-code'
 
 const PANE = 'todo-panel'
 const TITLE = 'Todo'
@@ -275,6 +276,11 @@ const SPACING = {
   terminal: { group: 1, item: 0, mark: 1 },
   graphical: { group: 'lg', item: 'xs', mark: 'xs' },
 } as const
+// A card's border plus its padding: done lines start here so their ✓ sits under each card's ○.
+const CARD_PADDING = 1
+const CARD_INSET = CARD_PADDING + 1
+// The first of these splits an item into a title and a dimmer caption beneath it.
+const CAPTION_SEPARATORS = ['：', ': ', ' — '] as const
 
 const todoText = atom({ plugin: 'todo-panel', key: 'text' } as const, null, {
   shape: 'text-1',
@@ -336,9 +342,41 @@ export const groupTodo = (lines: TodoLine[]): TodoGroup[] =>
 const isNamed = (names: readonly string[], section: string) =>
   names.includes(section.trim().toLowerCase())
 
+export type ItemParts = { title: string; caption?: string }
+
+export const splitItem = (text: string): ItemParts => {
+  // Every place a separator occurs, so an empty side at one still lets a later one split.
+  const cuts = CAPTION_SEPARATORS.flatMap(separator =>
+    text.split(separator).slice(1).map((_, index) => {
+      const at = text.split(separator, index + 1).join(separator).length
+      return { at, title: text.slice(0, at).trim(), caption: text.slice(at + separator.length).trim() }
+    }),
+  ).filter(cut => cut.title !== '' && cut.caption !== '')
+  const first = cuts.reduce<(typeof cuts)[number] | undefined>(
+    (best, cut) => (best === undefined || cut.at < best.at ? cut : best),
+    undefined,
+  )
+
+  return first === undefined ? { title: text } : { title: first.title, caption: first.caption }
+}
+
 type Ui = Pick<Elements['desktop'], 'Box' | 'Text'>
+type ItemLine = Extract<BodyLine, { kind: 'item' }>
 
 const withoutBackticks = (text: string) => text.replaceAll('`', '')
+const isDoneItem = (line: BodyLine) => line.kind === 'item' && line.isDone
+
+// The terminal's colors, theme keys only so they follow light and dark: a group named
+// here colors its header and marks, the others keep the default text color.
+const TERMINAL_GROUP_COLORS: readonly { names: readonly string[]; color: Color }[] = [
+  { names: CURRENT_SECTIONS, color: 'claude' },
+  { names: ['issues', '问题'], color: 'error' },
+  { names: ['ideas', '新想法'], color: 'merged' },
+]
+const DONE_COLOR: Color = 'success'
+
+const terminalColorOf = (title: string) =>
+  TERMINAL_GROUP_COLORS.find(group => isNamed(group.names, title))?.color
 
 const drawLine = ({ Box, Text }: Ui, line: BodyLine, title: string, markGap: Space) => {
   const isCurrent = isNamed(CURRENT_SECTIONS, title)
@@ -365,9 +403,67 @@ const drawLine = ({ Box, Text }: Ui, line: BodyLine, title: string, markGap: Spa
   )
 }
 
-const drawGroup = (ui: Ui, group: TodoGroup, itemGap: Space, markGap: Space) => {
+// The terminal's card: a rounded box with the open mark, the title, and any caption beneath.
+// Every border is gray but Now's, so the one bright border marks the work in progress.
+const drawCard = ({ Box, Text }: Ui, line: ItemLine, title: string) => {
+  const isCurrent = isNamed(CURRENT_SECTIONS, title)
+  const isMuted = isNamed(MUTED_SECTIONS, title)
+  const parts = splitItem(withoutBackticks(line.text))
+
+  return (
+    <Box
+      flexDirection="row"
+      gap={SPACING.terminal.mark}
+      borderStyle="round"
+      borderColor={isCurrent ? terminalColorOf(title) : undefined}
+      borderDimColor={!isCurrent}
+      paddingX={CARD_PADDING}
+    >
+      <Text color={terminalColorOf(title)} dimColor={isMuted}>
+        ○
+      </Text>
+      <Box flexDirection="column" flexShrink={1}>
+        <Text dimColor={isMuted} weight={isCurrent ? 'medium' : undefined}>
+          {parts.title}
+        </Text>
+        {parts.caption !== undefined && <Text dimColor>{parts.caption}</Text>}
+      </Box>
+    </Box>
+  )
+}
+
+// A done item on the terminal: a green ✓ under the cards' ○, the text dimmed and struck through.
+const drawDoneLine = ({ Box, Text }: Ui, line: ItemLine) => (
+  <Box flexDirection="row" gap={SPACING.terminal.mark} paddingLeft={CARD_INSET}>
+    <Text color={DONE_COLOR}>✓</Text>
+    <Box flexShrink={1}>
+      <Text dimColor strikethrough>
+        {withoutBackticks(line.text)}
+      </Text>
+    </Box>
+  </Box>
+)
+
+type DrawLines = (ui: Ui, lines: BodyLine[], title: string) => ReturnType<typeof drawLine>[]
+type SurfaceStyle = { drawLines: DrawLines; headerColor: (title: string) => Color | undefined }
+
+// Open items as cards, then the done ones as plain lines, as a completed list sits below.
+const TERMINAL_STYLE: SurfaceStyle = {
+  drawLines: (ui, lines, title) =>
+    [...lines.filter(line => !isDoneItem(line)), ...lines.filter(isDoneItem)].map(line => {
+      if (line.kind === 'text') return drawLine(ui, line, title, SPACING.terminal.mark)
+      return line.isDone ? drawDoneLine(ui, line) : drawCard(ui, line, title)
+    }),
+  headerColor: terminalColorOf,
+}
+
+const GRAPHICAL_STYLE: SurfaceStyle = {
+  drawLines: (ui, lines, title) => lines.map(line => drawLine(ui, line, title, SPACING.graphical.mark)),
+  headerColor: title => (isNamed(CURRENT_SECTIONS, title) ? ACCENT : undefined),
+}
+
+const drawGroup = (ui: Ui, group: TodoGroup, itemGap: Space, style: SurfaceStyle) => {
   const { Box, Text } = ui
-  const isCurrent = isNamed(CURRENT_SECTIONS, group.title)
   const isDim = isNamed(MUTED_SECTIONS, group.title)
 
   return (
@@ -377,7 +473,7 @@ const drawGroup = (ui: Ui, group: TodoGroup, itemGap: Space, markGap: Space) => 
           <Text
             size="footnote"
             weight="semibold"
-            color={isCurrent ? ACCENT : undefined}
+            color={style.headerColor(group.title)}
             dimColor={isDim}
           >
             {group.title}
@@ -394,7 +490,7 @@ const drawGroup = (ui: Ui, group: TodoGroup, itemGap: Space, markGap: Space) => 
           Nothing yet
         </Text>
       ) : (
-        group.lines.map(line => drawLine(ui, line, group.title, markGap))
+        style.drawLines(ui, group.lines, group.title)
       )}
     </Box>
   )
@@ -521,12 +617,14 @@ export const register: Register = on => {
       return <Text dimColor>No list yet. Type /todo to create one.</Text>
     }
 
-    const space = e.surface === 'terminal' ? SPACING.terminal : SPACING.graphical
+    const isTerminal = e.surface === 'terminal'
+    const space = isTerminal ? SPACING.terminal : SPACING.graphical
+    const style = isTerminal ? TERMINAL_STYLE : GRAPHICAL_STYLE
 
     return (
       <Box flexDirection="column" gap={space.group}>
         {groupTodo(parseTodo(text)).map(group =>
-          drawGroup({ Box, Text }, group, space.item, space.mark),
+          drawGroup({ Box, Text }, group, space.item, style),
         )}
       </Box>
     )
@@ -540,7 +638,7 @@ export const register: Register = on => {
 import type { UiPane } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
-import { findUncheckedLines, groupTodo, parseTodo } from './register'
+import { findUncheckedLines, groupTodo, parseTodo, splitItem } from './register'
 
 const PANE = {
   plugin: 'todo-panel',
@@ -584,6 +682,54 @@ test('groupTodo counts open items and keeps empty groups', async () => {
     ['Now', 1, 2],
     ['Maybe', 0, 0],
   ])
+})
+
+test('splitItem takes the detail after the first colon or dash as a caption', async () => {
+  expect(splitItem('worktree 验收：显示主工作区那份')).toEqual({ title: 'worktree 验收', caption: '显示主工作区那份' })
+  expect(splitItem('release ticket: DARE-1 DARE-2')).toEqual({ title: 'release ticket', caption: 'DARE-1 DARE-2' })
+  expect(splitItem('ship it — before Friday: no later')).toEqual({ title: 'ship it', caption: 'before Friday: no later' })
+  expect(splitItem(' ：x — y')).toEqual({ title: '：x', caption: 'y' })
+})
+
+test('splitItem leaves a title whole when no detail follows a separator', async () => {
+  for (const text of ['see https://x.io at 10:30', '：only detail', 'ends with a colon:', 'plain item']) {
+    expect(splitItem(text)).toEqual({ title: text })
+  }
+})
+
+const textOf = (text: string) => () => ({
+  value: { value: { shape: 'text-1', value: text }, version: 1 },
+})
+
+test('on the terminal each open item is a card with its detail beneath, done items after as plain lines', async ($, on) => {
+  on('state.get', textOf('## Now\n- [x] done B\n- [ ] do A：why it matters\n## Maybe\n- [ ] park C\n'))
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const cards = (await ui.findAll({ type: 'Box' })).filter(box => box.props.borderStyle === 'round')
+  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+
+  expect(cards.map(card => card.text)).toEqual(['○do Awhy it matters', '○park C'])
+  expect((await ui.find({ type: 'Text', text: /^do A$/ }))?.text).toBe('do A')
+  expect((await ui.find({ type: 'Text', text: /^why it matters$/ }))?.props.dimColor).toBe(true)
+  expect(texts.indexOf('do A')).toBeLessThan(texts.indexOf('done B'))
+  expect((await ui.find({ type: 'Text', text: /^done B$/ }))?.props.strikethrough).toBe(true)
+  expect(cards[0]?.props.borderColor).toBe('claude')
+  expect(cards[0]?.props.borderDimColor).toBe(false)
+  expect(cards[1]?.props.borderDimColor).toBe(true)
+  await ui.unmount()
+})
+
+test('graphical surfaces keep the plain list, in file order and with no cards', async ($, on) => {
+  on('state.get', textOf('## Now\n- [x] done B\n- [ ] do A：why it matters\n'))
+
+  for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    const boxes = await ui.findAll({ type: 'Box' })
+    const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+
+    expect(boxes.some(box => box.props.borderStyle !== undefined)).toBe(false)
+    expect(texts.indexOf('done B')).toBeLessThan(texts.indexOf('do A：why it matters'))
+    await ui.unmount()
+  }
 })
 
 test('/todo closes a drawn pane and opens one that is closed or waiting undrawn', async ($, on) => {
@@ -675,10 +821,32 @@ test('the current group is accented and parked ones dimmed, under English or old
 
   for (const [current, parked] of [['Now', 'Maybe'], ['现在', '待定']]) {
     text = `## ${current}\n- [ ] A\n## ${parked}\n- [ ] B\n`
-    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    for (const [surface, accent] of [['terminal', 'claude'], ['desktop', 'suggestion']] as const) {
+      const ui = await $.ui.mount({ ...PANE, surface })
 
-    expect((await ui.find({ type: 'Text', text: new RegExp(`^${current}$`) }))?.props.color).toBe('suggestion')
-    expect((await ui.find({ type: 'Text', text: new RegExp(`^${parked}$`) }))?.props.dimColor).toBe(true)
+      expect((await ui.find({ type: 'Text', text: new RegExp(`^${current}$`) }))?.props.color).toBe(accent)
+      expect((await ui.find({ type: 'Text', text: new RegExp(`^${parked}$`) }))?.props.dimColor).toBe(true)
+      await ui.unmount()
+    }
+  }
+})
+
+test('on the terminal headers and marks take their group color, and done marks are green', async ($, on) => {
+  let text = ''
+  on('state.get', () => ({ value: { value: { shape: 'text-1', value: text }, version: 1 } }))
+
+  for (const names of [['Now', 'Issues', 'Ideas', 'Next'], ['现在', '问题', '新想法', '接下来']]) {
+    const [now, issues, ideas, next] = names
+    text = `## ${now}\n- [ ] A\n- [x] B\n## ${issues}\n- [ ] C\n## ${ideas}\n- [ ] D\n## ${next}\n- [ ] E\n`
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const headerColors = await Promise.all(
+      names.map(async name => (await ui.find({ type: 'Text', text: new RegExp(`^${name}$`) }))?.props.color),
+    )
+    const markColors = (await ui.findAll({ type: 'Text', text: /^○$/ })).map(mark => mark.props.color)
+
+    expect(headerColors).toEqual(['claude', 'error', 'merged', undefined])
+    expect(markColors).toEqual(['claude', 'error', 'merged', undefined])
+    expect((await ui.find({ type: 'Text', text: /^✓$/ }))?.props.color).toBe('success')
     await ui.unmount()
   }
 })

@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Elements, Register, Space } from 'claude-code'
+import type { Color, Elements, Register, Space } from 'claude-code'
 
 const PANE = 'todo-panel'
 const TITLE = 'Todo'
@@ -15,6 +15,11 @@ const SPACING = {
   terminal: { group: 1, item: 0, mark: 1 },
   graphical: { group: 'lg', item: 'xs', mark: 'xs' },
 } as const
+// A card's border plus its padding: done lines start here so their ✓ sits under each card's ○.
+const CARD_PADDING = 1
+const CARD_INSET = CARD_PADDING + 1
+// The first of these splits an item into a title and a dimmer caption beneath it.
+const CAPTION_SEPARATORS = ['：', ': ', ' — '] as const
 
 const todoText = atom({ plugin: 'todo-panel', key: 'text' } as const, null, {
   shape: 'text-1',
@@ -76,9 +81,41 @@ export const groupTodo = (lines: TodoLine[]): TodoGroup[] =>
 const isNamed = (names: readonly string[], section: string) =>
   names.includes(section.trim().toLowerCase())
 
+export type ItemParts = { title: string; caption?: string }
+
+export const splitItem = (text: string): ItemParts => {
+  // Every place a separator occurs, so an empty side at one still lets a later one split.
+  const cuts = CAPTION_SEPARATORS.flatMap(separator =>
+    text.split(separator).slice(1).map((_, index) => {
+      const at = text.split(separator, index + 1).join(separator).length
+      return { at, title: text.slice(0, at).trim(), caption: text.slice(at + separator.length).trim() }
+    }),
+  ).filter(cut => cut.title !== '' && cut.caption !== '')
+  const first = cuts.reduce<(typeof cuts)[number] | undefined>(
+    (best, cut) => (best === undefined || cut.at < best.at ? cut : best),
+    undefined,
+  )
+
+  return first === undefined ? { title: text } : { title: first.title, caption: first.caption }
+}
+
 type Ui = Pick<Elements['desktop'], 'Box' | 'Text'>
+type ItemLine = Extract<BodyLine, { kind: 'item' }>
 
 const withoutBackticks = (text: string) => text.replaceAll('`', '')
+const isDoneItem = (line: BodyLine) => line.kind === 'item' && line.isDone
+
+// The terminal's colors, theme keys only so they follow light and dark: a group named
+// here colors its header and marks, the others keep the default text color.
+const TERMINAL_GROUP_COLORS: readonly { names: readonly string[]; color: Color }[] = [
+  { names: CURRENT_SECTIONS, color: 'claude' },
+  { names: ['issues', '问题'], color: 'error' },
+  { names: ['ideas', '新想法'], color: 'merged' },
+]
+const DONE_COLOR: Color = 'success'
+
+const terminalColorOf = (title: string) =>
+  TERMINAL_GROUP_COLORS.find(group => isNamed(group.names, title))?.color
 
 const drawLine = ({ Box, Text }: Ui, line: BodyLine, title: string, markGap: Space) => {
   const isCurrent = isNamed(CURRENT_SECTIONS, title)
@@ -105,9 +142,67 @@ const drawLine = ({ Box, Text }: Ui, line: BodyLine, title: string, markGap: Spa
   )
 }
 
-const drawGroup = (ui: Ui, group: TodoGroup, itemGap: Space, markGap: Space) => {
+// The terminal's card: a rounded box with the open mark, the title, and any caption beneath.
+// Every border is gray but Now's, so the one bright border marks the work in progress.
+const drawCard = ({ Box, Text }: Ui, line: ItemLine, title: string) => {
+  const isCurrent = isNamed(CURRENT_SECTIONS, title)
+  const isMuted = isNamed(MUTED_SECTIONS, title)
+  const parts = splitItem(withoutBackticks(line.text))
+
+  return (
+    <Box
+      flexDirection="row"
+      gap={SPACING.terminal.mark}
+      borderStyle="round"
+      borderColor={isCurrent ? terminalColorOf(title) : undefined}
+      borderDimColor={!isCurrent}
+      paddingX={CARD_PADDING}
+    >
+      <Text color={terminalColorOf(title)} dimColor={isMuted}>
+        ○
+      </Text>
+      <Box flexDirection="column" flexShrink={1}>
+        <Text dimColor={isMuted} weight={isCurrent ? 'medium' : undefined}>
+          {parts.title}
+        </Text>
+        {parts.caption !== undefined && <Text dimColor>{parts.caption}</Text>}
+      </Box>
+    </Box>
+  )
+}
+
+// A done item on the terminal: a green ✓ under the cards' ○, the text dimmed and struck through.
+const drawDoneLine = ({ Box, Text }: Ui, line: ItemLine) => (
+  <Box flexDirection="row" gap={SPACING.terminal.mark} paddingLeft={CARD_INSET}>
+    <Text color={DONE_COLOR}>✓</Text>
+    <Box flexShrink={1}>
+      <Text dimColor strikethrough>
+        {withoutBackticks(line.text)}
+      </Text>
+    </Box>
+  </Box>
+)
+
+type DrawLines = (ui: Ui, lines: BodyLine[], title: string) => ReturnType<typeof drawLine>[]
+type SurfaceStyle = { drawLines: DrawLines; headerColor: (title: string) => Color | undefined }
+
+// Open items as cards, then the done ones as plain lines, as a completed list sits below.
+const TERMINAL_STYLE: SurfaceStyle = {
+  drawLines: (ui, lines, title) =>
+    [...lines.filter(line => !isDoneItem(line)), ...lines.filter(isDoneItem)].map(line => {
+      if (line.kind === 'text') return drawLine(ui, line, title, SPACING.terminal.mark)
+      return line.isDone ? drawDoneLine(ui, line) : drawCard(ui, line, title)
+    }),
+  headerColor: terminalColorOf,
+}
+
+const GRAPHICAL_STYLE: SurfaceStyle = {
+  drawLines: (ui, lines, title) => lines.map(line => drawLine(ui, line, title, SPACING.graphical.mark)),
+  headerColor: title => (isNamed(CURRENT_SECTIONS, title) ? ACCENT : undefined),
+}
+
+const drawGroup = (ui: Ui, group: TodoGroup, itemGap: Space, style: SurfaceStyle) => {
   const { Box, Text } = ui
-  const isCurrent = isNamed(CURRENT_SECTIONS, group.title)
   const isDim = isNamed(MUTED_SECTIONS, group.title)
 
   return (
@@ -117,7 +212,7 @@ const drawGroup = (ui: Ui, group: TodoGroup, itemGap: Space, markGap: Space) => 
           <Text
             size="footnote"
             weight="semibold"
-            color={isCurrent ? ACCENT : undefined}
+            color={style.headerColor(group.title)}
             dimColor={isDim}
           >
             {group.title}
@@ -134,7 +229,7 @@ const drawGroup = (ui: Ui, group: TodoGroup, itemGap: Space, markGap: Space) => 
           Nothing yet
         </Text>
       ) : (
-        group.lines.map(line => drawLine(ui, line, group.title, markGap))
+        style.drawLines(ui, group.lines, group.title)
       )}
     </Box>
   )
@@ -261,12 +356,14 @@ export const register: Register = on => {
       return <Text dimColor>No list yet. Type /todo to create one.</Text>
     }
 
-    const space = e.surface === 'terminal' ? SPACING.terminal : SPACING.graphical
+    const isTerminal = e.surface === 'terminal'
+    const space = isTerminal ? SPACING.terminal : SPACING.graphical
+    const style = isTerminal ? TERMINAL_STYLE : GRAPHICAL_STYLE
 
     return (
       <Box flexDirection="column" gap={space.group}>
         {groupTodo(parseTodo(text)).map(group =>
-          drawGroup({ Box, Text }, group, space.item, space.mark),
+          drawGroup({ Box, Text }, group, space.item, style),
         )}
       </Box>
     )

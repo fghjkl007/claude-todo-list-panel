@@ -5,6 +5,7 @@ A project todo pane for Claude Code. Every conversation in a project shares one 
 ## Features
 
 - **Six groups:** Now, Next, Backlog, Maybe, Issues and Ideas. "Now" uses the accent color, Backlog and Maybe are dimmed, and finished items show `✓` and are struck through.
+- **Cards in the terminal:** in the CLI each open item is a rounded card, in the style of Microsoft To Do, with any detail after the first colon (`：` or `: `) or ` — ` shown as a dimmer caption beneath the title. Only Now's cards have a colored (brand orange) border; Issues headers and marks are red, Ideas purple. Finished items follow as compact lines below the cards with a green `✓`.
 - **Shared across conversations:** every conversation in a project reads and writes the same file; in a git worktree they use the main worktree's copy.
 - **Kept up to date by the conversations:** each conversation gets the upkeep rules and the current list, adds new items as they come up, and checks them off when they are done.
 - **Format check:** an entry missing its `[ ]`, written with Write or Edit, is refused with a note on how to fix it.
