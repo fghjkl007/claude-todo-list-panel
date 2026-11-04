@@ -5,7 +5,7 @@ A project todo pane for Claude Code. Every conversation in a project shares one 
 ## Features
 
 - **Six groups:** Now, Next, Backlog, Maybe, Issues and Ideas. "Now" uses the accent color, Backlog and Maybe are dimmed, and finished items show `✓` and are struck through.
-- **Cards in the terminal:** in the CLI each open item is a rounded card, in the style of Microsoft To Do, with any detail after the first colon (`：` or `: `) or ` — ` shown as a dimmer caption beneath the title. Only Now's cards have a colored (brand orange) border; Issues headers and marks are red, Ideas purple. Finished items follow as compact lines below the cards with a green `✓`.
+- **Cards in the terminal:** in the CLI each open item is a rounded card, in the style of Microsoft To Do, with any detail after the first colon (`：` or `: `) or ` — ` shown as a dimmer caption beneath the title. An item written as fields, `item｜status｜next step`, shows the item as the title and each field on its own dimmer line. Each detail line is cut to one row; press a card's title to show that card's details in full, and press it again to fold them. Only Now's cards have a colored (brand orange) border; Issues headers and marks are red, Ideas purple. Finished items follow as compact lines below the cards with a green `✓`.
 - **Shared across conversations:** every conversation in a project reads and writes the same file; in a git worktree they use the main worktree's copy.
 - **Kept up to date by the conversations:** each conversation gets the upkeep rules and the current list, adds new items as they come up, and checks them off when they are done.
 - **Format check:** an entry missing its `[ ]`, written with Write or Edit, is refused with a note on how to fix it.
@@ -83,7 +83,7 @@ There is no background process and no change to `settings.json`. All the logic i
 
 - **Upkeep is not enforced:** it relies on rules given to the conversation, which may miss an item or forget to check one off.
 - **The format check is narrow:** it only checks entries starting with `-` or `*` written by Write and Edit; writes from Bash, hand edits and plain text lines are not checked.
-- **The pane is read-only:** to change the list, edit the file or tell the conversation.
+- **The pane does not edit the list:** pressing a card only folds or unfolds it; to change the list, edit the file or tell the conversation.
 - **The API may change:** the mod API is still early, and a Claude Code update may need changes here.
 
 ## Development

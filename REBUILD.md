@@ -87,7 +87,7 @@ The rules are the whole "automatic upkeep" mechanism, so their wording matters:
 - **Theme keys only, never hex colors**, so every color follows light and dark themes. On graphical surfaces only **Now** uses the accent, the theme key `suggestion`.
 - Each group header shows its **open item count** on the right (tabular digits, dimmed), hidden when zero.
 - Marks on graphical surfaces: `●` for open items in Now, `○` for other open items, `✓` for done. Done items are dimmed and struck through.
-- **Terminal cards (Microsoft To Do style):** in the CLI each open item is a rounded-border card: a `○`, the title, and, when the item has a `：`, `: ` or ` — ` after some text, everything after the first one as a dimmer caption beneath. **Quiet cards (style B, chosen from three mockups):** every card border is gray (`borderDimColor`) except Now's, which use `claude`. Group headers are bold and, like the `○` marks, take the group's color: Now/现在 `claude`, Issues/问题 `error`, Ideas/新想法 `merged`, the others the default text color; Backlog and Maybe (待定) dim the header, `○` and title. Done items are not cards: they follow the group's open cards as a `✓` in `success` with the text dimmed and struck through, indented 2 columns so `✓` sits under each card's `○`. No `+` on the right as in To Do: the pane has no action behind it. Graphical surfaces keep the flat list in file order.
+- **Terminal cards (Microsoft To Do style):** in the CLI each open item is a rounded-border card: a `○`, the title, and, when the item has a `：`, `: ` or ` — ` after some text, everything after the first one as a dimmer caption beneath. An item written as fields, `item｜status｜next step` (full-width `｜`, or ` | ` with spaces), is read as fields first: the item is the title and each later field a dimmer line of its own, so a `：` inside a field (`问题：…`, `来源：…`) stays where it is; empty fields are dropped. **Collapsed by default:** each caption or field line is cut to one row with an ellipsis (`wrap="truncate-end"`) while the title still wraps, so long details no longer fill the pane. A card with details gets a pressable title (a `plain` `Button` keyed `card:<item text>`) that opens that card alone, its details wrapping in full, and closes it on the next press; the open cards are kept in session state (`expanded`, by item text), so they stay open through redraws and file reloads, and a card whose text changes starts closed. **Quiet cards (style B, chosen from three mockups):** every card border is gray (`borderDimColor`) except Now's, which use `claude`. Group headers are bold and, like the `○` marks, take the group's color: Now/现在 `claude`, Issues/问题 `error`, Ideas/新想法 `merged`, the others the default text color; Backlog and Maybe (待定) dim the header, `○` and title. Done items are not cards: they follow the group's open cards as a `✓` in `success` with the text dimmed and struck through, indented 2 columns so `✓` sits under each card's `○`. No `+` on the right as in To Do: the pane has no action behind it. Graphical surfaces keep the flat list in file order.
 - Backlog and Maybe are dimmed as a whole (title and items).
 - An empty group shows `Nothing yet`.
 - **The mark never touches the text:** mark and text sit in a row with a gap (1 column in the terminal, `xs` on graphical surfaces). An early version had them touching in the CLI.
@@ -138,7 +138,7 @@ claude plugin validate mods/todo-panel
 claude plugin validate .
 ```
 
-Expected: 13 tests pass. Validation passes with two existing warnings (no `author` in `plugin.json`, no marketplace `description`).
+Expected: 20 tests pass. Validation passes with two existing warnings (no `author` in `plugin.json`, no marketplace `description`).
 
 Lessons from writing the tests:
 
@@ -210,7 +210,7 @@ For a rebuilt copy, point the marketplace at your own repo or local folder inste
 
 ## 7. Acceptance checklist
 
-- [ ] `claude plugin test mods/todo-panel` passes (8 tests).
+- [ ] `claude plugin test mods/todo-panel` passes (20 tests).
 - [ ] `claude plugin validate` passes for the mod and the marketplace.
 - [ ] In a project with no list, `/todo` creates `docs/todo.md` with the six groups and opens the pane.
 - [ ] Editing `docs/todo.md` by hand updates the pane within about 2 seconds.
@@ -225,7 +225,7 @@ For a rebuilt copy, point the marketplace at your own repo or local folder inste
 
 ## 8. Source files
 
-Every file in the repo except `README.md` (whose content is covered above) and the ignored working notes, exactly as committed in `ec64633`.
+Every file in the repo except `README.md` (whose content is covered above) and the ignored working notes, exactly as in the commit that last updated this guide.
 
 ### `mods/todo-panel/.claude-plugin/plugin.json`
 
@@ -248,10 +248,12 @@ Every file in the repo except `README.md` (whose content is covered above) and t
 
 ````ts
 export type TodoText = string | null
+// The texts of the terminal cards pressed open: each stays open through redraws and reloads.
+export type ExpandedCards = readonly string[]
 
 declare module 'claude-code' {
   interface PluginState {
-    'todo-panel': { text: Shaped<TodoText> }
+    'todo-panel': { text: Shaped<TodoText>; expanded: Shaped<ExpandedCards> }
   }
 }
 ````
@@ -260,7 +262,7 @@ declare module 'claude-code' {
 
 ````tsx
 import { atom, read, update } from 'claude-code'
-import type { Color, Elements, Register, Space } from 'claude-code'
+import type { Color, Elements, Register, Space, StateDollar } from 'claude-code'
 
 const PANE = 'todo-panel'
 const TITLE = 'Todo'
@@ -279,12 +281,19 @@ const SPACING = {
 // A card's border plus its padding: done lines start here so their ✓ sits under each card's ○.
 const CARD_PADDING = 1
 const CARD_INSET = CARD_PADDING + 1
-// The first of these splits an item into a title and a dimmer caption beneath it.
+// An item written as fields (item｜status｜next step) shows each field on its own line.
+const FIELD_SEPARATOR = /｜| \| /
+// Otherwise the first of these splits an item into a title and a dimmer caption beneath it.
 const CAPTION_SEPARATORS = ['：', ': ', ' — '] as const
 
 const todoText = atom({ plugin: 'todo-panel', key: 'text' } as const, null, {
   shape: 'text-1',
 })
+// The terminal cards pressed open, by item text: a card whose text changes starts closed again.
+const expandedCards = atom({ plugin: 'todo-panel', key: 'expanded' } as const, [], {
+  shape: 'keys-1',
+})
+const CARD_KEY_PREFIX = 'card:'
 
 type Host = {
   process: {
@@ -342,9 +351,18 @@ export const groupTodo = (lines: TodoLine[]): TodoGroup[] =>
 const isNamed = (names: readonly string[], section: string) =>
   names.includes(section.trim().toLowerCase())
 
-export type ItemParts = { title: string; caption?: string }
+export type ItemParts = { title: string; details: readonly string[] }
 
-export const splitItem = (text: string): ItemParts => {
+const splitFields = (text: string): ItemParts | undefined => {
+  const [title, ...details] = text
+    .split(FIELD_SEPARATOR)
+    .map(field => field.trim())
+    .filter(field => field !== '')
+
+  return title !== undefined && details.length > 0 ? { title, details } : undefined
+}
+
+const splitCaption = (text: string): ItemParts => {
   // Every place a separator occurs, so an empty side at one still lets a later one split.
   const cuts = CAPTION_SEPARATORS.flatMap(separator =>
     text.split(separator).slice(1).map((_, index) => {
@@ -357,10 +375,13 @@ export const splitItem = (text: string): ItemParts => {
     undefined,
   )
 
-  return first === undefined ? { title: text } : { title: first.title, caption: first.caption }
+  return first === undefined ? { title: text, details: [] } : { title: first.title, details: [first.caption] }
 }
 
-type Ui = Pick<Elements['desktop'], 'Box' | 'Text'>
+// Fields win over a caption, so a colon inside a field (问题：…, 来源：…) stays in its field.
+export const splitItem = (text: string): ItemParts => splitFields(text) ?? splitCaption(text)
+
+type Ui = Pick<Elements['desktop'], 'Box' | 'Text' | 'Button'>
 type ItemLine = Extract<BodyLine, { kind: 'item' }>
 
 const withoutBackticks = (text: string) => text.replaceAll('`', '')
@@ -403,12 +424,52 @@ const drawLine = ({ Box, Text }: Ui, line: BodyLine, title: string, markGap: Spa
   )
 }
 
-// The terminal's card: a rounded box with the open mark, the title, and any caption beneath.
-// Every border is gray but Now's, so the one bright border marks the work in progress.
-const drawCard = ({ Box, Text }: Ui, line: ItemLine, title: string) => {
+// Which terminal cards are pressed open, and how a press opens or closes one, by item text.
+type CardToggles = { isExpanded: (text: string) => boolean; toggle: (text: string) => void }
+type ToggleHost = StateDollar & { ui: { log: (text: string) => void } }
+
+const toggled = (texts: readonly string[], text: string) =>
+  texts.includes(text) ? texts.filter(one => one !== text) : [...texts, text]
+
+const cardTogglesFor = async ($: ToggleHost): Promise<CardToggles> => {
+  const expanded = await read($, expandedCards)
+
+  return {
+    isExpanded: text => expanded.includes(text),
+    toggle: text => {
+      update($, expandedCards, texts => toggled(texts, text)).catch(error =>
+        $.ui.log(`todo-panel: ${String(error)}`),
+      )
+    },
+  }
+}
+
+// A card's title, pressable only when it has details to open, so every press does something.
+const drawCardTitle = ({ Button, Text }: Ui, line: ItemLine, parts: ItemParts, title: string, cards: CardToggles) => {
+  const isCurrent = isNamed(CURRENT_SECTIONS, title)
+  const label = (
+    <Text dimColor={isNamed(MUTED_SECTIONS, title)} weight={isCurrent ? 'medium' : undefined}>
+      {parts.title}
+    </Text>
+  )
+  if (parts.details.length === 0) return label
+
+  return (
+    <Button key={`${CARD_KEY_PREFIX}${line.text}`} plain onPress={() => cards.toggle(line.text)}>
+      {label}
+    </Button>
+  )
+}
+
+// The terminal's card: a rounded box with the open mark, the title, and any details beneath,
+// each cut to one row until the title is pressed. Every border is gray but Now's, so the one
+// bright border marks the work in progress.
+const drawCard = (ui: Ui, line: ItemLine, title: string, cards: CardToggles) => {
+  const { Box, Text } = ui
   const isCurrent = isNamed(CURRENT_SECTIONS, title)
   const isMuted = isNamed(MUTED_SECTIONS, title)
   const parts = splitItem(withoutBackticks(line.text))
+  const detailWrap = cards.isExpanded(line.text) ? 'wrap' : 'truncate-end'
 
   return (
     <Box
@@ -423,10 +484,12 @@ const drawCard = ({ Box, Text }: Ui, line: ItemLine, title: string) => {
         ○
       </Text>
       <Box flexDirection="column" flexShrink={1}>
-        <Text dimColor={isMuted} weight={isCurrent ? 'medium' : undefined}>
-          {parts.title}
-        </Text>
-        {parts.caption !== undefined && <Text dimColor>{parts.caption}</Text>}
+        {drawCardTitle(ui, line, parts, title, cards)}
+        {parts.details.map(detail => (
+          <Text dimColor wrap={detailWrap}>
+            {detail}
+          </Text>
+        ))}
       </Box>
     </Box>
   )
@@ -448,14 +511,14 @@ type DrawLines = (ui: Ui, lines: BodyLine[], title: string) => ReturnType<typeof
 type SurfaceStyle = { drawLines: DrawLines; headerColor: (title: string) => Color | undefined }
 
 // Open items as cards, then the done ones as plain lines, as a completed list sits below.
-const TERMINAL_STYLE: SurfaceStyle = {
+const terminalStyle = (cards: CardToggles): SurfaceStyle => ({
   drawLines: (ui, lines, title) =>
     [...lines.filter(line => !isDoneItem(line)), ...lines.filter(isDoneItem)].map(line => {
       if (line.kind === 'text') return drawLine(ui, line, title, SPACING.terminal.mark)
-      return line.isDone ? drawDoneLine(ui, line) : drawCard(ui, line, title)
+      return line.isDone ? drawDoneLine(ui, line) : drawCard(ui, line, title, cards)
     }),
   headerColor: terminalColorOf,
-}
+})
 
 const GRAPHICAL_STYLE: SurfaceStyle = {
   drawLines: (ui, lines, title) => lines.map(line => drawLine(ui, line, title, SPACING.graphical.mark)),
@@ -611,7 +674,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text } = $.ui.resolve(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
     const text = await read($, todoText)
     if (text === null) {
       return <Text dimColor>No list yet. Type /todo to create one.</Text>
@@ -619,12 +682,12 @@ export const register: Register = on => {
 
     const isTerminal = e.surface === 'terminal'
     const space = isTerminal ? SPACING.terminal : SPACING.graphical
-    const style = isTerminal ? TERMINAL_STYLE : GRAPHICAL_STYLE
+    const style = isTerminal ? terminalStyle(await cardTogglesFor($)) : GRAPHICAL_STYLE
 
     return (
       <Box flexDirection="column" gap={space.group}>
         {groupTodo(parseTodo(text)).map(group =>
-          drawGroup({ Box, Text }, group, space.item, style),
+          drawGroup({ Box, Text, Button }, group, space.item, style),
         )}
       </Box>
     )
@@ -637,6 +700,7 @@ export const register: Register = on => {
 ````tsx
 import type { UiPane } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
+import type { ElementQuery, FoundElement } from 'claude-code/testing'
 
 import { findUncheckedLines, groupTodo, parseTodo, splitItem } from './register'
 
@@ -685,16 +749,28 @@ test('groupTodo counts open items and keeps empty groups', async () => {
 })
 
 test('splitItem takes the detail after the first colon or dash as a caption', async () => {
-  expect(splitItem('worktree 验收：显示主工作区那份')).toEqual({ title: 'worktree 验收', caption: '显示主工作区那份' })
-  expect(splitItem('release ticket: DARE-1 DARE-2')).toEqual({ title: 'release ticket', caption: 'DARE-1 DARE-2' })
-  expect(splitItem('ship it — before Friday: no later')).toEqual({ title: 'ship it', caption: 'before Friday: no later' })
-  expect(splitItem(' ：x — y')).toEqual({ title: '：x', caption: 'y' })
+  expect(splitItem('worktree 验收：显示主工作区那份')).toEqual({ title: 'worktree 验收', details: ['显示主工作区那份'] })
+  expect(splitItem('release ticket: DARE-1 DARE-2')).toEqual({ title: 'release ticket', details: ['DARE-1 DARE-2'] })
+  expect(splitItem('ship it — before Friday: no later')).toEqual({ title: 'ship it', details: ['before Friday: no later'] })
+  expect(splitItem(' ：x — y')).toEqual({ title: '：x', details: ['y'] })
 })
 
 test('splitItem leaves a title whole when no detail follows a separator', async () => {
-  for (const text of ['see https://x.io at 10:30', '：only detail', 'ends with a colon:', 'plain item']) {
-    expect(splitItem(text)).toEqual({ title: text })
+  for (const text of ['see https://x.io at 10:30', '：only detail', 'ends with a colon:', 'plain item', '｜only detail']) {
+    expect(splitItem(text)).toEqual({ title: text, details: [] })
   }
+})
+
+test('splitItem reads ｜ fields first: the item, then each field on its own line', async () => {
+  expect(splitItem('循环时间上限｜已提交，未合入｜实测后合入（来源：用户 2026-11-03）')).toEqual({
+    title: '循环时间上限',
+    details: ['已提交，未合入', '实测后合入（来源：用户 2026-11-03）'],
+  })
+  expect(splitItem('问题：读取范围｜原因未查')).toEqual({ title: '问题：读取范围', details: ['原因未查'] })
+  expect(splitItem('loop limit | merged |  | verify on device')).toEqual({
+    title: 'loop limit',
+    details: ['merged', 'verify on device'],
+  })
 })
 
 const textOf = (text: string) => () => ({
@@ -716,6 +792,108 @@ test('on the terminal each open item is a card with its detail beneath, done ite
   expect(cards[0]?.props.borderDimColor).toBe(false)
   expect(cards[1]?.props.borderDimColor).toBe(true)
   await ui.unmount()
+})
+
+test('on the terminal a card shows each ｜ field as its own dim line', async ($, on) => {
+  on('state.get', textOf('## Next\n- [ ] limit｜built, not merged｜merge after the test\n'))
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const card = (await ui.findAll({ type: 'Box' })).find(box => box.props.borderStyle === 'round')
+  const details = await ui.findAll({ type: 'Text', text: /^(built, not merged|merge after the test)$/ })
+
+  expect(card?.text).toBe('○limitbuilt, not mergedmerge after the test')
+  expect(details.map(found => [found.text, found.props.dimColor])).toEqual([
+    ['built, not merged', true],
+    ['merge after the test', true],
+  ])
+  await ui.unmount()
+})
+
+const CARD_LIST = '## Next\n- [ ] limit｜built, not merged｜merge after the test\n- [ ] ship：before Friday\n- [ ] plain item\n'
+const LIMIT_DETAILS = /^(built, not merged|merge after the test)$/
+const SHIP_DETAIL = /^before Friday$/
+
+type Drawing = {
+  find: (query: ElementQuery) => Promise<FoundElement | undefined>
+  findAll: (query: ElementQuery) => Promise<FoundElement[]>
+  press: (target: { key: string }) => Promise<unknown>
+}
+
+const wrapsOf = async (ui: Drawing, text: RegExp) =>
+  (await ui.findAll({ type: 'Text', text })).map(found => found.props.wrap)
+
+const pressTitle = async (ui: Drawing, title: RegExp) => {
+  const button = await ui.find({ type: 'Button', text: title })
+  expect(button?.key).toBeDefined()
+  await ui.press({ key: button?.key ?? '' })
+}
+
+test('on the terminal each detail is cut to one row, and only a title with details is pressable', async ($, on) => {
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(CARD_LIST))
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const buttons = await ui.findAll({ type: 'Button' })
+
+  expect(await wrapsOf(ui, LIMIT_DETAILS)).toEqual(['truncate-end', 'truncate-end'])
+  expect(await wrapsOf(ui, SHIP_DETAIL)).toEqual(['truncate-end'])
+  expect(buttons.map(button => [button.text, button.props.plain])).toEqual([
+    ['limit', true],
+    ['ship', true],
+  ])
+  expect(buttons[0]?.key).not.toBe(buttons[1]?.key)
+  expect(await ui.find({ type: 'Text', text: /^plain item$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('on the terminal pressing a title expands that card alone, and pressing again collapses it', async ($, on) => {
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(CARD_LIST))
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  await pressTitle(ui, /^limit$/)
+  expect(await wrapsOf(ui, LIMIT_DETAILS)).toEqual(['wrap', 'wrap'])
+  expect(await wrapsOf(ui, SHIP_DETAIL)).toEqual(['truncate-end'])
+
+  await pressTitle(ui, /^limit$/)
+  expect(await wrapsOf(ui, LIMIT_DETAILS)).toEqual(['truncate-end', 'truncate-end'])
+  await ui.unmount()
+})
+
+test('on the terminal an expanded card stays open through a redraw and a change to the file', async ($, on) => {
+  let text = CARD_LIST
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, () => textOf(text)())
+
+  const first = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await pressTitle(first, /^ship$/)
+  await first.unmount()
+
+  text = `## Now\n- [ ] new：item\n${CARD_LIST}`
+  const again = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  expect(await wrapsOf(again, SHIP_DETAIL)).toEqual(['wrap'])
+  expect(await wrapsOf(again, LIMIT_DETAILS)).toEqual(['truncate-end', 'truncate-end'])
+  expect(await wrapsOf(again, /^item$/)).toEqual(['truncate-end'])
+  await again.unmount()
+})
+
+test('on the terminal a pressable title keeps its weight in Now and its dimness in a parked group', async ($, on) => {
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf('## Now\n- [ ] do A：why\n## Maybe\n- [ ] park C：later\n'))
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  expect((await ui.find({ type: 'Button', text: /^do A$/ }))?.type).toBe('Button')
+  expect((await ui.find({ type: 'Text', text: /^do A$/ }))?.props.weight).toBe('medium')
+  expect((await ui.find({ type: 'Text', text: /^park C$/ }))?.props.dimColor).toBe(true)
+  await ui.unmount()
+})
+
+test('graphical surfaces have no pressable titles and cut no text', async ($, on) => {
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(CARD_LIST))
+
+  for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    const texts = await ui.findAll({ type: 'Text' })
+
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+    expect(texts.some(found => found.props.wrap !== undefined)).toBe(false)
+    await ui.unmount()
+  }
 })
 
 test('graphical surfaces keep the plain list, in file order and with no cards', async ($, on) => {

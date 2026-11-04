@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Color, Elements, Register, Space } from 'claude-code'
+import type { Color, Elements, Register, Space, StateDollar } from 'claude-code'
 
 const PANE = 'todo-panel'
 const TITLE = 'Todo'
@@ -18,12 +18,19 @@ const SPACING = {
 // A card's border plus its padding: done lines start here so their ✓ sits under each card's ○.
 const CARD_PADDING = 1
 const CARD_INSET = CARD_PADDING + 1
-// The first of these splits an item into a title and a dimmer caption beneath it.
+// An item written as fields (item｜status｜next step) shows each field on its own line.
+const FIELD_SEPARATOR = /｜| \| /
+// Otherwise the first of these splits an item into a title and a dimmer caption beneath it.
 const CAPTION_SEPARATORS = ['：', ': ', ' — '] as const
 
 const todoText = atom({ plugin: 'todo-panel', key: 'text' } as const, null, {
   shape: 'text-1',
 })
+// The terminal cards pressed open, by item text: a card whose text changes starts closed again.
+const expandedCards = atom({ plugin: 'todo-panel', key: 'expanded' } as const, [], {
+  shape: 'keys-1',
+})
+const CARD_KEY_PREFIX = 'card:'
 
 type Host = {
   process: {
@@ -81,9 +88,18 @@ export const groupTodo = (lines: TodoLine[]): TodoGroup[] =>
 const isNamed = (names: readonly string[], section: string) =>
   names.includes(section.trim().toLowerCase())
 
-export type ItemParts = { title: string; caption?: string }
+export type ItemParts = { title: string; details: readonly string[] }
 
-export const splitItem = (text: string): ItemParts => {
+const splitFields = (text: string): ItemParts | undefined => {
+  const [title, ...details] = text
+    .split(FIELD_SEPARATOR)
+    .map(field => field.trim())
+    .filter(field => field !== '')
+
+  return title !== undefined && details.length > 0 ? { title, details } : undefined
+}
+
+const splitCaption = (text: string): ItemParts => {
   // Every place a separator occurs, so an empty side at one still lets a later one split.
   const cuts = CAPTION_SEPARATORS.flatMap(separator =>
     text.split(separator).slice(1).map((_, index) => {
@@ -96,10 +112,13 @@ export const splitItem = (text: string): ItemParts => {
     undefined,
   )
 
-  return first === undefined ? { title: text } : { title: first.title, caption: first.caption }
+  return first === undefined ? { title: text, details: [] } : { title: first.title, details: [first.caption] }
 }
 
-type Ui = Pick<Elements['desktop'], 'Box' | 'Text'>
+// Fields win over a caption, so a colon inside a field (问题：…, 来源：…) stays in its field.
+export const splitItem = (text: string): ItemParts => splitFields(text) ?? splitCaption(text)
+
+type Ui = Pick<Elements['desktop'], 'Box' | 'Text' | 'Button'>
 type ItemLine = Extract<BodyLine, { kind: 'item' }>
 
 const withoutBackticks = (text: string) => text.replaceAll('`', '')
@@ -142,12 +161,52 @@ const drawLine = ({ Box, Text }: Ui, line: BodyLine, title: string, markGap: Spa
   )
 }
 
-// The terminal's card: a rounded box with the open mark, the title, and any caption beneath.
-// Every border is gray but Now's, so the one bright border marks the work in progress.
-const drawCard = ({ Box, Text }: Ui, line: ItemLine, title: string) => {
+// Which terminal cards are pressed open, and how a press opens or closes one, by item text.
+type CardToggles = { isExpanded: (text: string) => boolean; toggle: (text: string) => void }
+type ToggleHost = StateDollar & { ui: { log: (text: string) => void } }
+
+const toggled = (texts: readonly string[], text: string) =>
+  texts.includes(text) ? texts.filter(one => one !== text) : [...texts, text]
+
+const cardTogglesFor = async ($: ToggleHost): Promise<CardToggles> => {
+  const expanded = await read($, expandedCards)
+
+  return {
+    isExpanded: text => expanded.includes(text),
+    toggle: text => {
+      update($, expandedCards, texts => toggled(texts, text)).catch(error =>
+        $.ui.log(`todo-panel: ${String(error)}`),
+      )
+    },
+  }
+}
+
+// A card's title, pressable only when it has details to open, so every press does something.
+const drawCardTitle = ({ Button, Text }: Ui, line: ItemLine, parts: ItemParts, title: string, cards: CardToggles) => {
+  const isCurrent = isNamed(CURRENT_SECTIONS, title)
+  const label = (
+    <Text dimColor={isNamed(MUTED_SECTIONS, title)} weight={isCurrent ? 'medium' : undefined}>
+      {parts.title}
+    </Text>
+  )
+  if (parts.details.length === 0) return label
+
+  return (
+    <Button key={`${CARD_KEY_PREFIX}${line.text}`} plain onPress={() => cards.toggle(line.text)}>
+      {label}
+    </Button>
+  )
+}
+
+// The terminal's card: a rounded box with the open mark, the title, and any details beneath,
+// each cut to one row until the title is pressed. Every border is gray but Now's, so the one
+// bright border marks the work in progress.
+const drawCard = (ui: Ui, line: ItemLine, title: string, cards: CardToggles) => {
+  const { Box, Text } = ui
   const isCurrent = isNamed(CURRENT_SECTIONS, title)
   const isMuted = isNamed(MUTED_SECTIONS, title)
   const parts = splitItem(withoutBackticks(line.text))
+  const detailWrap = cards.isExpanded(line.text) ? 'wrap' : 'truncate-end'
 
   return (
     <Box
@@ -162,10 +221,12 @@ const drawCard = ({ Box, Text }: Ui, line: ItemLine, title: string) => {
         ○
       </Text>
       <Box flexDirection="column" flexShrink={1}>
-        <Text dimColor={isMuted} weight={isCurrent ? 'medium' : undefined}>
-          {parts.title}
-        </Text>
-        {parts.caption !== undefined && <Text dimColor>{parts.caption}</Text>}
+        {drawCardTitle(ui, line, parts, title, cards)}
+        {parts.details.map(detail => (
+          <Text dimColor wrap={detailWrap}>
+            {detail}
+          </Text>
+        ))}
       </Box>
     </Box>
   )
@@ -187,14 +248,14 @@ type DrawLines = (ui: Ui, lines: BodyLine[], title: string) => ReturnType<typeof
 type SurfaceStyle = { drawLines: DrawLines; headerColor: (title: string) => Color | undefined }
 
 // Open items as cards, then the done ones as plain lines, as a completed list sits below.
-const TERMINAL_STYLE: SurfaceStyle = {
+const terminalStyle = (cards: CardToggles): SurfaceStyle => ({
   drawLines: (ui, lines, title) =>
     [...lines.filter(line => !isDoneItem(line)), ...lines.filter(isDoneItem)].map(line => {
       if (line.kind === 'text') return drawLine(ui, line, title, SPACING.terminal.mark)
-      return line.isDone ? drawDoneLine(ui, line) : drawCard(ui, line, title)
+      return line.isDone ? drawDoneLine(ui, line) : drawCard(ui, line, title, cards)
     }),
   headerColor: terminalColorOf,
-}
+})
 
 const GRAPHICAL_STYLE: SurfaceStyle = {
   drawLines: (ui, lines, title) => lines.map(line => drawLine(ui, line, title, SPACING.graphical.mark)),
@@ -350,7 +411,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text } = $.ui.resolve(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
     const text = await read($, todoText)
     if (text === null) {
       return <Text dimColor>No list yet. Type /todo to create one.</Text>
@@ -358,12 +419,12 @@ export const register: Register = on => {
 
     const isTerminal = e.surface === 'terminal'
     const space = isTerminal ? SPACING.terminal : SPACING.graphical
-    const style = isTerminal ? TERMINAL_STYLE : GRAPHICAL_STYLE
+    const style = isTerminal ? terminalStyle(await cardTogglesFor($)) : GRAPHICAL_STYLE
 
     return (
       <Box flexDirection="column" gap={space.group}>
         {groupTodo(parseTodo(text)).map(group =>
-          drawGroup({ Box, Text }, group, space.item, style),
+          drawGroup({ Box, Text, Button }, group, space.item, style),
         )}
       </Box>
     )

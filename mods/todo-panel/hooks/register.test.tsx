@@ -1,5 +1,6 @@
 import type { UiPane } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
+import type { ElementQuery, FoundElement } from 'claude-code/testing'
 
 import { findUncheckedLines, groupTodo, parseTodo, splitItem } from './register'
 
@@ -48,16 +49,28 @@ test('groupTodo counts open items and keeps empty groups', async () => {
 })
 
 test('splitItem takes the detail after the first colon or dash as a caption', async () => {
-  expect(splitItem('worktree 验收：显示主工作区那份')).toEqual({ title: 'worktree 验收', caption: '显示主工作区那份' })
-  expect(splitItem('release ticket: DARE-1 DARE-2')).toEqual({ title: 'release ticket', caption: 'DARE-1 DARE-2' })
-  expect(splitItem('ship it — before Friday: no later')).toEqual({ title: 'ship it', caption: 'before Friday: no later' })
-  expect(splitItem(' ：x — y')).toEqual({ title: '：x', caption: 'y' })
+  expect(splitItem('worktree 验收：显示主工作区那份')).toEqual({ title: 'worktree 验收', details: ['显示主工作区那份'] })
+  expect(splitItem('release ticket: DARE-1 DARE-2')).toEqual({ title: 'release ticket', details: ['DARE-1 DARE-2'] })
+  expect(splitItem('ship it — before Friday: no later')).toEqual({ title: 'ship it', details: ['before Friday: no later'] })
+  expect(splitItem(' ：x — y')).toEqual({ title: '：x', details: ['y'] })
 })
 
 test('splitItem leaves a title whole when no detail follows a separator', async () => {
-  for (const text of ['see https://x.io at 10:30', '：only detail', 'ends with a colon:', 'plain item']) {
-    expect(splitItem(text)).toEqual({ title: text })
+  for (const text of ['see https://x.io at 10:30', '：only detail', 'ends with a colon:', 'plain item', '｜only detail']) {
+    expect(splitItem(text)).toEqual({ title: text, details: [] })
   }
+})
+
+test('splitItem reads ｜ fields first: the item, then each field on its own line', async () => {
+  expect(splitItem('循环时间上限｜已提交，未合入｜实测后合入（来源：用户 2026-11-03）')).toEqual({
+    title: '循环时间上限',
+    details: ['已提交，未合入', '实测后合入（来源：用户 2026-11-03）'],
+  })
+  expect(splitItem('问题：读取范围｜原因未查')).toEqual({ title: '问题：读取范围', details: ['原因未查'] })
+  expect(splitItem('loop limit | merged |  | verify on device')).toEqual({
+    title: 'loop limit',
+    details: ['merged', 'verify on device'],
+  })
 })
 
 const textOf = (text: string) => () => ({
@@ -79,6 +92,108 @@ test('on the terminal each open item is a card with its detail beneath, done ite
   expect(cards[0]?.props.borderDimColor).toBe(false)
   expect(cards[1]?.props.borderDimColor).toBe(true)
   await ui.unmount()
+})
+
+test('on the terminal a card shows each ｜ field as its own dim line', async ($, on) => {
+  on('state.get', textOf('## Next\n- [ ] limit｜built, not merged｜merge after the test\n'))
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const card = (await ui.findAll({ type: 'Box' })).find(box => box.props.borderStyle === 'round')
+  const details = await ui.findAll({ type: 'Text', text: /^(built, not merged|merge after the test)$/ })
+
+  expect(card?.text).toBe('○limitbuilt, not mergedmerge after the test')
+  expect(details.map(found => [found.text, found.props.dimColor])).toEqual([
+    ['built, not merged', true],
+    ['merge after the test', true],
+  ])
+  await ui.unmount()
+})
+
+const CARD_LIST = '## Next\n- [ ] limit｜built, not merged｜merge after the test\n- [ ] ship：before Friday\n- [ ] plain item\n'
+const LIMIT_DETAILS = /^(built, not merged|merge after the test)$/
+const SHIP_DETAIL = /^before Friday$/
+
+type Drawing = {
+  find: (query: ElementQuery) => Promise<FoundElement | undefined>
+  findAll: (query: ElementQuery) => Promise<FoundElement[]>
+  press: (target: { key: string }) => Promise<unknown>
+}
+
+const wrapsOf = async (ui: Drawing, text: RegExp) =>
+  (await ui.findAll({ type: 'Text', text })).map(found => found.props.wrap)
+
+const pressTitle = async (ui: Drawing, title: RegExp) => {
+  const button = await ui.find({ type: 'Button', text: title })
+  expect(button?.key).toBeDefined()
+  await ui.press({ key: button?.key ?? '' })
+}
+
+test('on the terminal each detail is cut to one row, and only a title with details is pressable', async ($, on) => {
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(CARD_LIST))
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const buttons = await ui.findAll({ type: 'Button' })
+
+  expect(await wrapsOf(ui, LIMIT_DETAILS)).toEqual(['truncate-end', 'truncate-end'])
+  expect(await wrapsOf(ui, SHIP_DETAIL)).toEqual(['truncate-end'])
+  expect(buttons.map(button => [button.text, button.props.plain])).toEqual([
+    ['limit', true],
+    ['ship', true],
+  ])
+  expect(buttons[0]?.key).not.toBe(buttons[1]?.key)
+  expect(await ui.find({ type: 'Text', text: /^plain item$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('on the terminal pressing a title expands that card alone, and pressing again collapses it', async ($, on) => {
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(CARD_LIST))
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  await pressTitle(ui, /^limit$/)
+  expect(await wrapsOf(ui, LIMIT_DETAILS)).toEqual(['wrap', 'wrap'])
+  expect(await wrapsOf(ui, SHIP_DETAIL)).toEqual(['truncate-end'])
+
+  await pressTitle(ui, /^limit$/)
+  expect(await wrapsOf(ui, LIMIT_DETAILS)).toEqual(['truncate-end', 'truncate-end'])
+  await ui.unmount()
+})
+
+test('on the terminal an expanded card stays open through a redraw and a change to the file', async ($, on) => {
+  let text = CARD_LIST
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, () => textOf(text)())
+
+  const first = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await pressTitle(first, /^ship$/)
+  await first.unmount()
+
+  text = `## Now\n- [ ] new：item\n${CARD_LIST}`
+  const again = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  expect(await wrapsOf(again, SHIP_DETAIL)).toEqual(['wrap'])
+  expect(await wrapsOf(again, LIMIT_DETAILS)).toEqual(['truncate-end', 'truncate-end'])
+  expect(await wrapsOf(again, /^item$/)).toEqual(['truncate-end'])
+  await again.unmount()
+})
+
+test('on the terminal a pressable title keeps its weight in Now and its dimness in a parked group', async ($, on) => {
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf('## Now\n- [ ] do A：why\n## Maybe\n- [ ] park C：later\n'))
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  expect((await ui.find({ type: 'Button', text: /^do A$/ }))?.type).toBe('Button')
+  expect((await ui.find({ type: 'Text', text: /^do A$/ }))?.props.weight).toBe('medium')
+  expect((await ui.find({ type: 'Text', text: /^park C$/ }))?.props.dimColor).toBe(true)
+  await ui.unmount()
+})
+
+test('graphical surfaces have no pressable titles and cut no text', async ($, on) => {
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(CARD_LIST))
+
+  for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    const texts = await ui.findAll({ type: 'Text' })
+
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
+    expect(texts.some(found => found.props.wrap !== undefined)).toBe(false)
+    await ui.unmount()
+  }
 })
 
 test('graphical surfaces keep the plain list, in file order and with no cards', async ($, on) => {
