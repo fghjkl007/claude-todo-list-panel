@@ -4,9 +4,8 @@
 const FIELD_SEPARATOR = /｜| \| /
 // Otherwise the first of these splits an item into a title and a note.
 const CAPTION_SEPARATORS = ['：', ': ', ' — '] as const
-// A source in brackets at the very end of an item: (source: …), or the older Chinese form in
-// full-width brackets that lists still carry. The greedy head makes it the last such bracket
-// when an item holds two.
+// A source in brackets at the very end of an item: （来源：…） or (source: …). The greedy head
+// makes it the last such bracket when an item holds two.
 const SOURCE = /^(.*)[（(]\s*(?:来源|source)\s*[：:]\s*(.+?)\s*[）)]\s*$/is
 
 export type TodoLine =
@@ -105,7 +104,7 @@ const splitCaption = (text: string): ItemFields => {
 }
 
 // A source at the end is read off first; then fields win over a note, so a colon inside a field
-// (issue：…) stays in its field.
+// (问题：…) stays in its field.
 export const splitItem = (text: string): ItemFields => {
   const { rest, source } = splitSource(text)
   const fields = splitFields(rest) ?? splitCaption(rest)

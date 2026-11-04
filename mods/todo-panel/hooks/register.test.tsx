@@ -51,17 +51,16 @@ test('groupTodo counts open items and keeps empty groups', async () => {
   ])
 })
 
-// The source uses the older Chinese form, in full-width brackets, which lists still carry.
-const NEW_ITEM = 'loop time limit｜reviewed, waiting to merge｜ask to merge after the F9 test（来源：user 2026-11-03）'
+const NEW_ITEM = '循环时间上限｜已复审，待合入｜F9 实测结束后申请合入（来源：用户 2026-11-03）'
 
-test('splitItem reads item｜status｜next step by position, and a source in full-width brackets', async () => {
+test('splitItem reads item｜status｜next step（来源：…） by position', async () => {
   expect(splitItem(NEW_ITEM)).toEqual({
-    title: 'loop time limit',
-    status: 'reviewed, waiting to merge',
-    next: 'ask to merge after the F9 test',
-    source: 'user 2026-11-03',
+    title: '循环时间上限',
+    status: '已复审，待合入',
+    next: 'F9 实测结束后申请合入',
+    source: '用户 2026-11-03',
   })
-  expect(splitItem('issue：read range｜cause unknown')).toEqual({ title: 'issue：read range', status: 'cause unknown' })
+  expect(splitItem('问题：读取范围｜原因未查')).toEqual({ title: '问题：读取范围', status: '原因未查' })
   expect(splitItem('limit | merged | verify | asked twice (source: review)')).toEqual({
     title: 'limit',
     status: 'merged',
@@ -82,14 +81,14 @@ test('splitItem leaves a missing field out and never moves a later field into it
 })
 
 test('splitItem reads an older title：note item, and a source on any item', async () => {
-  expect(splitItem('worktree check：shows the main copy')).toEqual({ title: 'worktree check', note: 'shows the main copy' })
+  expect(splitItem('worktree 验收：显示主工作区那份')).toEqual({ title: 'worktree 验收', note: '显示主工作区那份' })
   expect(splitItem('release ticket: DARE-1 DARE-2')).toEqual({ title: 'release ticket', note: 'DARE-1 DARE-2' })
   expect(splitItem('ship it — before Friday: no later')).toEqual({ title: 'ship it', note: 'before Friday: no later' })
   expect(splitItem(' ：x — y')).toEqual({ title: '：x', note: 'y' })
-  expect(splitItem('ship：before Friday（来源：review report）')).toEqual({
+  expect(splitItem('ship：before Friday（来源：审核报告）')).toEqual({
     title: 'ship',
     note: 'before Friday',
-    source: 'review report',
+    source: '审核报告',
   })
   expect(splitItem('ship (source: review)')).toEqual({ title: 'ship', source: 'review' })
   expect(splitItem('ship｜done (来源: a)｜check (来源: b)')).toEqual({
@@ -146,23 +145,23 @@ const pressTitle = async (ui: Drawing, title: RegExp) => {
 const CARD_LIST = '## Next\n- [ ] limit｜built, not merged｜merge after the test\n- [ ] ship：before Friday\n- [ ] plain item\n'
 const LIMIT_SHUT = '▸limitbuilt, not merged · Next: merge after the test'
 const SHIP_SHUT = '▸shipbefore Friday'
-const DONE_LINE = /^\d+ done$/
-const HINT = 'ctrl+x tab select · ↑↓ move · Enter open/shut · Esc back to prompt'
 
-const LIMIT_SUMMARY = 'reviewed, waiting to merge · Next: ask to merge after the F9 test'
-
-test('on the terminal a shut card shows ▸, the title and status · next step on one cut row, in English under a Chinese heading too', async ($, on) => {
-  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(`## 现在\n- [ ] ${NEW_ITEM}\n- [ ] watch｜too few samples\n- [ ] title only\n`))
+test('on the terminal a shut card shows ▸, the title and status · next step on one cut row', async ($, on) => {
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(`## 现在\n- [ ] ${NEW_ITEM}\n- [ ] 观察｜样本不足\n- [ ] 只有标题\n`))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect(await cardTexts(ui)).toEqual([`▸loop time limit${LIMIT_SUMMARY}`, '▸watchtoo few samples', '○title only'])
-  expect(await wrapsOf(ui, /^reviewed, waiting/)).toEqual(['truncate-end'])
-  expect((await ui.findAll({ type: 'Button' })).map(button => button.text)).toEqual(['现在', 'loop time limit', 'watch'])
-  expect(await ui.find({ type: 'Text', text: /2026-11-03/ })).toBeUndefined()
+  expect(await cardTexts(ui)).toEqual([
+    '▸循环时间上限已复审，待合入 · 下一步：F9 实测结束后申请合入',
+    '▸观察样本不足',
+    '○只有标题',
+  ])
+  expect(await wrapsOf(ui, /下一步：F9/)).toEqual(['truncate-end'])
+  expect((await ui.findAll({ type: 'Button' })).map(button => button.text)).toEqual(['现在', '循环时间上限', '观察'])
+  expect(await ui.find({ type: 'Text', text: /来源/ })).toBeUndefined()
   await ui.unmount()
 })
 
-test('on the terminal a shut card with no status or next step shows its note', async ($, on) => {
+test('on the terminal a shut card with no status or next step shows its note, and an English list English labels', async ($, on) => {
   on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(`${CARD_LIST}- [ ] gap｜｜fill it\n`))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
@@ -172,29 +171,25 @@ test('on the terminal a shut card with no status or next step shows its note', a
 })
 
 test('on the terminal pressing a title opens that card alone into labeled lines, and pressing again shuts it', async ($, on) => {
-  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(`## Now\n- [ ] ${NEW_ITEM}\n- [ ] ship：before Friday\n`))
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(`## 现在\n- [ ] ${NEW_ITEM}\n- [ ] ship：before Friday\n`))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  await pressTitle(ui, /^loop time limit$/)
+  await pressTitle(ui, /^循环时间上限$/)
   expect(await cardTexts(ui)).toEqual([
-    '▾loop time limitStatus: reviewed, waiting to mergeNext: ask to merge after the F9 testSource: user 2026-11-03',
+    '▾循环时间上限状态：已复审，待合入下一步：F9 实测结束后申请合入来源：用户 2026-11-03',
     '▸shipbefore Friday',
   ])
-  expect(await wrapsOf(ui, /^(reviewed, waiting to merge|ask to merge after the F9 test|user 2026-11-03)$/)).toEqual([
-    'wrap',
-    'wrap',
-    'wrap',
-  ])
+  expect(await wrapsOf(ui, /^(已复审，待合入|F9 实测结束后申请合入|用户 2026-11-03)$/)).toEqual(['wrap', 'wrap', 'wrap'])
 
   await pressTitle(ui, /^ship$/)
-  expect((await cardTexts(ui))[1]).toBe('▾shipNote: before Friday')
+  expect((await cardTexts(ui))[1]).toBe('▾ship说明：before Friday')
 
-  await pressTitle(ui, /^loop time limit$/)
-  expect((await cardTexts(ui))[0]).toBe(`▸loop time limit${LIMIT_SUMMARY}`)
+  await pressTitle(ui, /^循环时间上限$/)
+  expect((await cardTexts(ui))[0]).toBe('▸循环时间上限已复审，待合入 · 下一步：F9 实测结束后申请合入')
   await ui.unmount()
 })
 
-test('on the terminal an open card shows only the fields it has, under English labels', async ($, on) => {
+test('on the terminal an open card shows only the fields it has, under English labels in an English list', async ($, on) => {
   on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf('## Next\n- [ ] gap｜｜fill it (source: review)\n'))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
@@ -253,14 +248,14 @@ test('on the terminal an open card stays open through a redraw and a change to t
 })
 
 test('on the terminal done items fold into one line per group that opens on press', async ($, on) => {
-  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf('## Now\n- [x] done B\n- [ ] do A：why\n- [x] done C\n## Next\n- [x] done D\n'))
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf('## 现在\n- [x] done B\n- [ ] do A：why\n- [x] done C\n## 接下来\n- [x] done D\n'))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  const summaries = await ui.findAll({ type: 'Button', text: DONE_LINE })
+  const summaries = await ui.findAll({ type: 'Button', text: /^已完成/ })
   const texts = async () => (await ui.findAll({ type: 'Text' })).map(found => found.text)
 
-  expect(summaries.map(button => button.text)).toEqual(['2 done', '1 done'])
+  expect(summaries.map(button => button.text)).toEqual(['已完成 2 项', '已完成 1 项'])
   expect(await ui.find({ type: 'Text', text: /^done/ })).toBeUndefined()
-  expect((await texts()).indexOf('do A')).toBeLessThan((await texts()).indexOf('2 done'))
+  expect((await texts()).indexOf('do A')).toBeLessThan((await texts()).indexOf('已完成 2 项'))
 
   await ui.press({ key: summaries[0]?.key ?? '' })
   const shown = await ui.findAll({ type: 'Text', text: /^done/ })
@@ -269,25 +264,25 @@ test('on the terminal done items fold into one line per group that opens on pres
     ['done C', true],
   ])
   expect((await ui.find({ type: 'Text', text: /^✓$/ }))?.props.color).toBe('success')
-  expect((await texts()).indexOf('done C')).toBeLessThan((await texts()).indexOf('1 done'))
+  expect((await texts()).indexOf('done C')).toBeLessThan((await texts()).indexOf('已完成 1 项'))
   await ui.unmount()
 })
 
-test('on the terminal a group header counts its open items as a bare number, and its done line is English, under either heading language', async ($, on) => {
+test('on the terminal a group header counts its open items as a bare number, in either language', async ($, on) => {
   let text = ''
   on('state.get', { plugin: 'todo-panel', key: 'text' }, () => textOf(text)())
 
-  for (const [list, header] of [
-    ['## 现在\n- [ ] A\n- [ ] B\n- [x] C\n', '▾现在2'],
-    ['## Now\n- [ ] A\n- [ ] B\n- [x] C\n', '▾Now2'],
+  for (const [list, header, done] of [
+    ['## 现在\n- [ ] A\n- [ ] B\n- [x] C\n', '▾现在2', '已完成 1 项'],
+    ['## Now\n- [ ] A\n- [ ] B\n- [x] C\n', '▾Now2', '1 done'],
   ] as const) {
     text = list
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
     expect(await headersOf(ui)).toEqual([header])
     expect((await ui.find({ type: 'Text', text: /^2$/ }))?.props.tabular).toBe(true)
-    expect(await ui.find({ type: 'Text', text: /\d open|open \d/ })).toBeUndefined()
-    expect((await ui.find({ type: 'Button', text: DONE_LINE }))?.text).toBe('1 done')
+    expect(await ui.find({ type: 'Text', text: /未完成|\d open/ })).toBeUndefined()
+    expect((await ui.find({ type: 'Button', text: done }))?.text).toBe(done)
     await ui.unmount()
   }
 })
@@ -361,30 +356,28 @@ test('only a titled group with items has a header Button: an empty, a text-only 
   ])
 })
 
-const FOLD_LIST = '## Now\n- [ ] do A：why\n- [ ] do B\n- [x] done C\n## Next\n- [ ] do D｜in progress\n## Maybe\n'
-const FOLD_KEYS = ['group:0:Now', 'card:0:do A：why', 'done:0:Now', 'group:0:Next', 'card:0:do D｜in progress']
-const NOW_FOLDED_KEYS = ['group:0:Now', 'group:0:Next', 'card:0:do D｜in progress']
-const FOLD_HEADERS = ['▾Now2', '▾Next1', 'Maybe0']
-const FOLD_CARDS = ['▸do Awhy', '○do B', '▸do Din progress']
+const FOLD_LIST = '## 现在\n- [ ] 甲：为什么\n- [ ] 乙\n- [x] 丙\n## 接下来\n- [ ] 丁｜进行中\n## 待定\n'
+const FOLD_KEYS = ['group:0:现在', 'card:0:甲：为什么', 'done:0:现在', 'group:0:接下来', 'card:0:丁｜进行中']
+const NOW_FOLDED_KEYS = ['group:0:现在', 'group:0:接下来', 'card:0:丁｜进行中']
 
 test('on the terminal pressing a header folds its group to the header and count, the next group right below, and pressing again unfolds it', async ($, on) => {
   on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(FOLD_LIST))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect(await headersOf(ui)).toEqual(FOLD_HEADERS)
-  expect(await cardTexts(ui)).toEqual(FOLD_CARDS)
+  expect(await headersOf(ui)).toEqual(['▾现在2', '▾接下来1', '待定0'])
+  expect(await cardTexts(ui)).toEqual(['▸甲为什么', '○乙', '▸丁进行中'])
 
-  await pressTitle(ui, /^Now$/)
+  await pressTitle(ui, /^现在$/)
   const texts = await textsOf(ui)
-  expect(await headersOf(ui)).toEqual(['▸Now2', '▾Next1', 'Maybe0'])
-  expect(texts.slice(texts.indexOf('Now'), texts.indexOf('Next') + 1)).toEqual(['Now', '2', '▾', 'Next'])
-  expect(await cardTexts(ui)).toEqual(['▸do Din progress'])
-  expect(await ui.find({ type: 'Button', text: DONE_LINE })).toBeUndefined()
+  expect(await headersOf(ui)).toEqual(['▸现在2', '▾接下来1', '待定0'])
+  expect(texts.slice(texts.indexOf('现在'), texts.indexOf('接下来') + 1)).toEqual(['现在', '2', '▾', '接下来'])
+  expect(await cardTexts(ui)).toEqual(['▸丁进行中'])
+  expect(await ui.find({ type: 'Button', text: /^已完成/ })).toBeUndefined()
 
-  await pressTitle(ui, /^Now$/)
-  expect(await headersOf(ui)).toEqual(FOLD_HEADERS)
-  expect(await cardTexts(ui)).toEqual(FOLD_CARDS)
-  expect((await ui.find({ type: 'Button', text: DONE_LINE }))?.text).toBe('1 done')
+  await pressTitle(ui, /^现在$/)
+  expect(await headersOf(ui)).toEqual(['▾现在2', '▾接下来1', '待定0'])
+  expect(await cardTexts(ui)).toEqual(['▸甲为什么', '○乙', '▸丁进行中'])
+  expect((await ui.find({ type: 'Button', text: /^已完成/ }))?.text).toBe('已完成 1 项')
   await ui.unmount()
 })
 
@@ -392,8 +385,8 @@ test('on the terminal an empty group keeps a plain header with no mark that cann
   on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(FOLD_LIST))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect((await ui.find({ type: 'Text', text: /^Maybe$/ }))?.props.dimColor).toBe(true)
-  expect(await ui.find({ type: 'Button', text: /^Maybe$/ })).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: /^待定$/ }))?.props.dimColor).toBe(true)
+  expect(await ui.find({ type: 'Button', text: /^待定$/ })).toBeUndefined()
   expect((await ui.find({ type: 'Text', text: /^Nothing yet$/ }))?.text).toBe('Nothing yet')
   await ui.unmount()
 })
@@ -403,33 +396,48 @@ test('on the terminal a folded group stays folded through a redraw and a change 
   on('state.get', { plugin: 'todo-panel', key: 'text' }, () => textOf(text)())
 
   const first = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await pressTitle(first, /^do A$/)
-  await pressTitle(first, /^Now$/)
+  await pressTitle(first, /^甲$/)
+  await pressTitle(first, /^现在$/)
   await first.unmount()
 
-  text = `## Issues\n- [ ] new：item\n${FOLD_LIST}`
+  text = `## 问题\n- [ ] 新：项\n${FOLD_LIST}`
   const again = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await headersOf(again)).toEqual(['▾Issues1', '▸Now2', '▾Next1', 'Maybe0'])
-  expect(await cardTexts(again)).toEqual(['▸newitem', '▸do Din progress'])
+  expect(await headersOf(again)).toEqual(['▾问题1', '▸现在2', '▾接下来1', '待定0'])
+  expect(await cardTexts(again)).toEqual(['▸新项', '▸丁进行中'])
 
-  await pressTitle(again, /^Now$/)
-  expect(await cardTexts(again)).toEqual(['▸newitem', '▾do ANote: why', '○do B', '▸do Din progress'])
+  await pressTitle(again, /^现在$/)
+  expect(await cardTexts(again)).toEqual(['▸新项', '▾甲说明：为什么', '○乙', '▸丁进行中'])
   await again.unmount()
 })
 
 test('on the terminal a header shows the same bare open count folded or not, 0 when all are done or it is empty', async ($, on) => {
-  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf('## Now\n- [x] A\n- [x] B\n## Next\n- [ ] C\n## Maybe\n'))
-  const unfolded = ['▾Now0', '▾Next1', 'Maybe0']
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  const headerKeys = (await buttonKeys(ui)).filter(key => key.startsWith('group:'))
-  expect(await headersOf(ui)).toEqual(unfolded)
+  let text = ''
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, () => textOf(text)())
 
-  for (const key of headerKeys) await ui.press({ key })
-  expect(await headersOf(ui)).toEqual(['▸Now0', '▸Next1', 'Maybe0'])
+  for (const [list, unfolded, folded] of [
+    [
+      '## 现在\n- [x] A\n- [x] B\n## 接下来\n- [ ] C\n## 待定\n',
+      ['▾现在0', '▾接下来1', '待定0'],
+      ['▸现在0', '▸接下来1', '待定0'],
+    ],
+    [
+      '## Now\n- [x] A\n- [x] B\n## Next\n- [ ] C\n## Maybe\n',
+      ['▾Now0', '▾Next1', 'Maybe0'],
+      ['▸Now0', '▸Next1', 'Maybe0'],
+    ],
+  ] as const) {
+    text = list
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const headerKeys = (await buttonKeys(ui)).filter(key => key.startsWith('group:'))
+    expect(await headersOf(ui)).toEqual(unfolded)
 
-  for (const key of headerKeys) await ui.press({ key })
-  expect(await headersOf(ui)).toEqual(unfolded)
-  await ui.unmount()
+    for (const key of headerKeys) await ui.press({ key })
+    expect(await headersOf(ui)).toEqual(folded)
+
+    for (const key of headerKeys) await ui.press({ key })
+    expect(await headersOf(ui)).toEqual(unfolded)
+    await ui.unmount()
+  }
 })
 
 test('the arrows and Tab walk headers, cards and done lines as drawn, skipping a folded group', async ($, on) => {
@@ -439,11 +447,11 @@ test('the arrows and Tab walk headers, cards and done lines as drawn, skipping a
   expect(pressableKeysOf(FOLD_LIST)).toEqual(FOLD_KEYS)
   expect(await buttonKeys(ui)).toEqual(FOLD_KEYS)
 
-  await pressTitle(ui, /^Now$/)
-  expect(pressableKeysOf(FOLD_LIST, ['group:0:Now'])).toEqual(NOW_FOLDED_KEYS)
+  await pressTitle(ui, /^现在$/)
+  expect(pressableKeysOf(FOLD_LIST, ['group:0:现在'])).toEqual(NOW_FOLDED_KEYS)
   expect(await buttonKeys(ui)).toEqual(NOW_FOLDED_KEYS)
-  expect(arrowTarget(NOW_FOLDED_KEYS, 'group:0:Now', arrowBy(1))).toBe('group:0:Next')
-  expect(arrowTarget(NOW_FOLDED_KEYS, 'group:0:Next', arrowBy(-1))).toBe('group:0:Now')
+  expect(arrowTarget(NOW_FOLDED_KEYS, 'group:0:现在', arrowBy(1))).toBe('group:0:接下来')
+  expect(arrowTarget(NOW_FOLDED_KEYS, 'group:0:接下来', arrowBy(-1))).toBe('group:0:现在')
   await ui.unmount()
 })
 
@@ -458,19 +466,19 @@ test('on the terminal the header under the focus is drawn in the accent, folded 
     (await ui.findAll({ type: 'Text', text: /^[▾▸]$/ })).map(mark => mark.props.color)
 
   const ui = await $.ui.mount({ ...FOCUSED_PANE, surface: 'terminal' })
-  await $.ui.focus(focusBy('group:0:Now'))
-  expect(await headerLook(ui, /^Now$/)).toEqual(['suggestion', 'bold', false])
-  expect(await headerLook(ui, /^Next$/)).toEqual([undefined, 'semibold', false])
+  await $.ui.focus(focusBy('group:0:现在'))
+  expect(await headerLook(ui, /^现在$/)).toEqual(['suggestion', 'bold', false])
+  expect(await headerLook(ui, /^接下来$/)).toEqual([undefined, 'semibold', false])
   expect((await cardsOf(ui)).map(card => card.props.borderStyle)).toEqual(['round', 'round', 'round'])
 
-  await ui.press({ key: 'group:0:Now' })
-  expect((await headersOf(ui))[0]).toBe('▸Now2')
-  expect(await headerLook(ui, /^Now$/)).toEqual(['suggestion', 'bold', false])
+  await ui.press({ key: 'group:0:现在' })
+  expect((await headersOf(ui))[0]).toBe('▸现在2')
+  expect(await headerLook(ui, /^现在$/)).toEqual(['suggestion', 'bold', false])
   expect((await markColors(ui))[0]).toBe('suggestion')
   await ui.unmount()
 
   const away = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await headerLook(away, /^Now$/)).toEqual(['claude', 'semibold', false])
+  expect(await headerLook(away, /^现在$/)).toEqual(['claude', 'semibold', false])
   expect((await markColors(away))[0]).toBe('claude')
   await away.unmount()
 })
@@ -478,15 +486,15 @@ test('on the terminal the header under the focus is drawn in the accent, folded 
 test('graphical surfaces ignore folding: every group stays whole, with no fold marks', async ($, on) => {
   on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(FOLD_LIST))
   const terminal = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await pressTitle(terminal, /^Now$/)
+  await pressTitle(terminal, /^现在$/)
   await terminal.unmount()
 
   for (const surface of GRAPHICAL) {
     const ui = await $.ui.mount({ ...PANE, surface })
     const texts = await textsOf(ui)
 
-    expect(await headersOf(ui)).toEqual(['Now2', 'Next1', 'Maybe'])
-    expect(['do A：why', 'do B', 'done C'].every(item => texts.includes(item))).toBe(true)
+    expect(await headersOf(ui)).toEqual(['现在2', '接下来1', '待定'])
+    expect(['甲：为什么', '乙', '丙'].every(item => texts.includes(item))).toBe(true)
     expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
     await ui.unmount()
   }
@@ -525,22 +533,22 @@ test('on the terminal the wheel, page keys, and arrows past the end or with no c
   await ui.unmount()
 })
 
-test('on the terminal an English key hint sits at the bottom when anything can be pressed, and nowhere else', async ($, on) => {
+test('on the terminal a key hint sits at the bottom when anything can be pressed, and nowhere else', async ($, on) => {
   let text = CARD_LIST
   on('state.get', { plugin: 'todo-panel', key: 'text' }, () => textOf(text)())
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const texts = await ui.findAll({ type: 'Text' })
-  expect(texts.at(-1)?.text).toBe(HINT)
+  expect(texts.at(-1)?.text).toBe('ctrl+x tab select · ↑↓ move · Enter open/shut · Esc back to prompt')
   expect(texts.at(-1)?.props.dimColor).toBe(true)
   await ui.unmount()
 
-  text = '## 现在\n- [ ] title only\n'
+  text = '## 现在\n- [ ] 只有标题\n'
   const headerOnly = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect((await textsOf(headerOnly)).at(-1)).toBe(HINT)
+  expect((await textsOf(headerOnly)).at(-1)).toBe('ctrl+x tab 选中 · ↑↓ 移动 · Enter 展开/收起 · Esc 回到输入框')
   await headerOnly.unmount()
 
-  text = '## Now\n## Next\n'
+  text = '## 现在\n## 接下来\n'
   const plain = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await plain.find({ type: 'Text', text: /ctrl\+x/ })).toBeUndefined()
   await plain.unmount()
@@ -774,17 +782,17 @@ test('the current group is accented and parked ones dimmed, under English or old
   }
 })
 
-test('a Done group, under the English or the older Chinese heading, is dimmed like Backlog and Maybe, and its done line is English', async ($, on) => {
+test('a Done or 已完成 group is dimmed like Backlog and Maybe, and its done items still show', async ($, on) => {
   let text = ''
   on('state.get', { plugin: 'todo-panel', key: 'text' }, () => textOf(text)())
 
-  for (const done of ['Done', '已完成']) {
+  for (const [done, doneLine] of [['Done', '1 done'], ['已完成', '已完成 1 项']] as const) {
     text = `## Now\n- [ ] A\n## ${done}\n- [x] shipped B\n`
     const heading = new RegExp(`^${done}$`)
 
     const terminal = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect((await terminal.find({ type: 'Text', text: heading }))?.props.dimColor).toBe(true)
-    await pressTitle(terminal, /^1 done$/)
+    await pressTitle(terminal, new RegExp(`^${doneLine}$`))
     expect((await terminal.find({ type: 'Text', text: /^shipped B$/ }))?.props.strikethrough).toBe(true)
     await terminal.unmount()
 

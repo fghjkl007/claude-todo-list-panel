@@ -25,6 +25,8 @@ const CARD_INSET = CARD_PADDING + 1
 // Done items sit under their done line's words, past its mark and the gap after it.
 const DONE_INSET = CARD_INSET + 2
 const SUMMARY_JOIN = ' · '
+// A list with any Chinese in it gets Chinese labels around its items.
+const CJK = /[㐀-鿿]/
 
 const todoText = atom({ plugin: 'todo-panel', key: 'text' } as const, null, {
   shape: 'text-1',
@@ -48,15 +50,36 @@ const GROUP_KEY_PREFIX = 'group:'
 // view; a Button key always starts card:, done: or group:, so no Box key can equal one.
 const BOX_KEY_PREFIX = 'box:'
 
-// The words the terminal adds around items, in English whatever language the list is in.
-const LABELS = {
-  status: 'Status: ',
-  next: 'Next: ',
-  note: 'Note: ',
-  source: 'Source: ',
-  done: (count: number) => `${count} done`,
-  hint: 'ctrl+x tab select · ↑↓ move · Enter open/shut · Esc back to prompt',
-} as const
+// The words the terminal adds around items, in the list's own language.
+type Labels = {
+  status: string
+  next: string
+  note: string
+  source: string
+  done: (count: number) => string
+  hint: string
+}
+
+const LABELS: Record<'zh' | 'en', Labels> = {
+  zh: {
+    status: '状态：',
+    next: '下一步：',
+    note: '说明：',
+    source: '来源：',
+    done: count => `已完成 ${count} 项`,
+    hint: 'ctrl+x tab 选中 · ↑↓ 移动 · Enter 展开/收起 · Esc 回到输入框',
+  },
+  en: {
+    status: 'Status: ',
+    next: 'Next: ',
+    note: 'Note: ',
+    source: 'Source: ',
+    done: count => `${count} done`,
+    hint: 'ctrl+x tab select · ↑↓ move · Enter open/shut · Esc back to prompt',
+  },
+}
+
+const labelsFor = (text: string) => (CJK.test(text) ? LABELS.zh : LABELS.en)
 
 type Host = {
   process: {
@@ -196,8 +219,9 @@ const reveal = async ($: RevealHost, key: string) => {
   if (shown.deny !== undefined) await $.ui.scroll({ in: PANE, to: { key } }).catch(refusal)
 }
 
-// What the terminal's drawing reads beyond the list: the focused key, what is open or folded.
+// What the terminal's drawing reads beyond the list: labels, the focused key, what is open or folded.
 type TerminalView = {
+  labels: Labels
   selected: string | null
   firstKey: string | undefined
   isOpen: (key: string) => boolean
@@ -212,6 +236,7 @@ const toggled = (keys: readonly string[], key: string) =>
 
 const terminalViewFor = async (
   $: ToggleHost,
+  text: string,
   groups: readonly TerminalGroup[],
   isFocused: boolean,
 ): Promise<TerminalView> => {
@@ -222,6 +247,7 @@ const terminalViewFor = async (
 
   // Opening or shutting a card, or folding a group, leaves the window where it is.
   return {
+    labels: labelsFor(text),
     selected: isFocused ? focused : null,
     firstKey: pressableKeys(groups, collapsed)[0],
     isOpen: key => expanded.includes(key),
@@ -246,15 +272,15 @@ const markOf = (isOpenable: boolean, isOpen: boolean) => (!isOpenable ? '○' : 
 const autoFocusOf = (key: string, view: TerminalView) => (key === view.firstKey ? true : undefined)
 
 // Shut, a card shows its status and next step on one row, or its note when it has neither.
-const summaryOf = (fields: ItemFields) => {
-  const nextStep = fields.next === undefined ? undefined : `${LABELS.next}${fields.next}`
+const summaryOf = (fields: ItemFields, labels: Labels) => {
+  const nextStep = fields.next === undefined ? undefined : `${labels.next}${fields.next}`
   const line = [fields.status, nextStep].filter(part => part !== undefined).join(SUMMARY_JOIN)
 
   return line === '' ? fields.note : line
 }
 
 // Open, each field it has on a labeled line wrapped in full, its wrapped rows indented past the label.
-const drawDetails = ({ Box, Text }: Ui, fields: ItemFields, isMuted: boolean) =>
+const drawDetails = ({ Box, Text }: Ui, fields: ItemFields, labels: Labels, isMuted: boolean) =>
   DETAIL_NAMES.flatMap(name => {
     const value = fields[name]
     if (value === undefined) return []
@@ -262,7 +288,7 @@ const drawDetails = ({ Box, Text }: Ui, fields: ItemFields, isMuted: boolean) =>
     return [
       <Box flexDirection="row">
         <Box flexShrink={0}>
-          <Text dimColor>{LABELS[name]}</Text>
+          <Text dimColor>{labels[name]}</Text>
         </Box>
         <Box flexShrink={1}>
           <Text dimColor={isMuted} wrap="wrap">
@@ -310,7 +336,7 @@ const drawCard = (ui: Ui, card: Card, title: string, view: TerminalView) => {
   const isMuted = isNamed(MUTED_SECTIONS, title)
   const isOpenable = hasDetails(card.fields)
   const isOpen = isOpenable && view.isOpen(card.key)
-  const summary = summaryOf(card.fields)
+  const summary = summaryOf(card.fields, view.labels)
 
   return (
     <Box
@@ -324,7 +350,7 @@ const drawCard = (ui: Ui, card: Card, title: string, view: TerminalView) => {
       <Box flexDirection="column" flexShrink={1}>
         {drawCardTitle(ui, card, title, view)}
         {isOpen
-          ? drawDetails(ui, card.fields, isMuted)
+          ? drawDetails(ui, card.fields, view.labels, isMuted)
           : summary !== undefined && (
               <Text dimColor wrap="truncate-end">
                 {summary}
@@ -361,7 +387,7 @@ const drawDoneList = (ui: Ui, group: TerminalGroup, view: TerminalView): Drawn[]
         autoFocus={autoFocusOf(group.doneKey, view)}
         onPress={() => view.toggle(group.doneKey)}
       >
-        <Text dimColor>{LABELS.done(group.done.length)}</Text>
+        <Text dimColor>{view.labels.done(group.done.length)}</Text>
       </Button>
     </Box>
   )
@@ -464,7 +490,7 @@ const drawTerminal = (ui: Ui, groups: readonly TerminalGroup[], view: TerminalVi
       {groups.map(group => drawGroup(ui, group.group, SPACING.terminal.item, headerOf(group), bodyOf(group)))}
       {view.firstKey !== undefined && (
         <Text size="footnote" dimColor>
-          {LABELS.hint}
+          {view.labels.hint}
         </Text>
       )}
     </Box>
@@ -680,7 +706,7 @@ export const register: Register = on => {
     if (e.surface !== 'terminal') return drawGraphical(ui, text)
 
     const groups = terminalGroups(text)
-    const view = await terminalViewFor($, groups, e.props.isFocused)
+    const view = await terminalViewFor($, text, groups, e.props.isFocused)
     return drawTerminal(ui, groups, view)
   })
 }
