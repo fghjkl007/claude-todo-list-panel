@@ -2,9 +2,11 @@
 
 Everything needed to rebuild the Todo Panel mod for Claude Code from scratch: what it is, the design decisions and why they were made, the file layout, the full source of every file, how to test and install it, and what is still open.
 
-Published copy: https://github.com/fghjkl007/claude-todo-list-panel (source as of commit `119f451`). Built and tested on Claude Code 2.1.316.
+Published copy: https://github.com/fghjkl007/claude-todo-list-panel (source as of commit `35a8765`). Built and tested on Claude Code 2.1.316.
 
 **For the Claude doing the rebuild:** load the `plugin-authoring` skill first. It holds the mod API reference and supplies the `claude-code` module types, which this repo does not commit (`.claude-plugin/types/` is ignored). Then create the files in "Source files" below, run the checks in "Test and validate", and go through "Acceptance checklist".
+
+**About the embedded code:** this guide is kept free of non-English text, so the code in "Source files" writes every Chinese or full-width character as a `\u` escape inside its string, template and regex literals (for example `'\u73b0\u5728'` for the Chinese Now heading), and its few comments that quoted such characters are in English. It behaves the same as the source files in the repo but is not byte-identical to them; either form can be committed.
 
 ---
 
@@ -90,9 +92,9 @@ The rules are the whole "automatic upkeep" mechanism, so their wording matters:
 - **Theme keys only, never hex colors**, so every color follows light and dark themes. On graphical surfaces only **Now** uses the accent, the theme key `suggestion`.
 - Each group header shows its **open item count** on the right as a bare number (tabular digits, dimmed), with no "open" or "done" words in any language (asked for as "on the right of each group show only the number of items left, not open and done"). On the terminal every titled header shows it, folded or not, `0` when everything in the group is done or it is empty; graphical surfaces hide it when zero.
 - Marks on graphical surfaces: `●` for open items in Now, `○` for other open items, `✓` for done. Done items are dimmed and struck through.
-- **Terminal cards (Microsoft To Do style):** in the CLI each open item is a rounded-border card. **Reading an item:** a source in brackets at the very end, `(source: …)`, is read off first (the last such bracket if there are two). Lists written in Chinese carry the older form, the Chinese word for "source" and a full-width colon inside full-width brackets, `（来源：…）`; it is read the same way, so a reader writing such a list must type it exactly. Then an item written as fields, `item｜status｜next step` (the full-width bar `｜`, or ` | ` with spaces), is read **by position**: item, status, next step, and any further fields joined as a note; an empty field stays empty, so a next step is never shown as the status. Otherwise the first full-width colon `：`, `: ` or ` — ` after some text splits a title from a note. A missing field is left out and never guessed (`splitItem` returns `{ title, status?, next?, note?, source? }`). **Shut by default:** the card shows `▸`, the title (which wraps under its own indent, the mark in a column of its own), and one dim row cut with `…` (`wrap="truncate-end"`): `status · Next: next step`, or the note when there is neither. **Open** (`▾`): every field it has on its own labeled line (`Status: `, `Next: `, `Note: `, `Source: `), the label dim and the value wrapping in full under its own indent. A card with nothing beyond its title keeps `○` and is not pressable. **Every label is English whatever language the list is in:** the field labels, the done line (`N done`) and the key hint come from one `LABELS` constant. An earlier version switched to Chinese labels when the list held any Chinese; that was dropped when the user asked for English labels and titles throughout. **Keys:** a card's title is a `plain` `Button` keyed `card:<n>:<item text>`, `n` counting earlier items of the same text, so two identical items open on their own; its Box is keyed `box:` + that key so it can be scrolled into view. The open keys live in session state (`expanded`, shape `keys-2`), so they survive redraws and file reloads. **Done items** fold into one line per group, `▸ N done`, a Button keyed `done:<n>:<group title>` that opens to the `✓` lines (`success`, dimmed and struck through). The header count is the bare number of open items, the same folded or unfolded. **Quiet cards (style B, chosen from three mockups):** every card border is gray (`borderDimColor`) except Now's, which use `claude`. Group headers are bold and, like the marks, take the group's color: Now `claude`, Issues `error`, Ideas `merged`, the others the default text color; Backlog, Maybe and Done dim the header, mark and title. The older Chinese headings of these groups get the same looks. No `+` on the right as in To Do: the pane has no action behind it. Graphical surfaces keep the flat list in file order, with bare counts and no Buttons.
+- **Terminal cards (Microsoft To Do style):** in the CLI each open item is a rounded-border card. **Reading an item:** a source in brackets at the very end, `(source: …)`, is read off first (the last such bracket if there are two). Lists written in Chinese carry the Chinese form: the Chinese word for "source" (U+6765 U+6E90) and a full-width colon (U+FF1A), inside full-width brackets (U+FF08, U+FF09); it is read the same way (`SOURCE` in `parse.ts`), so a test list must use exactly these characters. Then an item written as fields, `item | status | next step`, split by the full-width vertical bar (U+FF5C) or by ` | ` with spaces,, is read **by position**: item, status, next step, and any further fields joined as a note; an empty field stays empty, so a next step is never shown as the status. Otherwise the first full-width colon (U+FF1A), `: ` or ` — ` after some text splits a title from a note. A missing field is left out and never guessed (`splitItem` returns `{ title, status?, next?, note?, source? }`). **Shut by default:** the card shows `▸`, the title (which wraps under its own indent, the mark in a column of its own), and one dim row cut with `…` (`wrap="truncate-end"`): `status · Next: next step`, or the note when there is neither. **Open** (`▾`): every field it has on its own labeled line (`Status: `, `Next: `, `Note: `, `Source: `), the label dim and the value wrapping in full under its own indent. A card with nothing beyond its title keeps `○` and is not pressable. **Labels follow the list's language:** the field labels, the done line and the key hint come from one `LABELS` constant with a Chinese set and an English set, and `labelsFor` picks the Chinese set when the list holds any CJK character (`CJK`, U+3400 to U+9FFF), the English set otherwise. The English set is the one quoted in this guide (`Status: `, `Next: `, `Note: `, `Source: `, `N done`); the Chinese set says the same and is in `register.tsx`. Commit `119f451` briefly made every label English; `35a8765` restored the rule, since the user's own lists are written in Chinese. **Keys:** a card's title is a `plain` `Button` keyed `card:<n>:<item text>`, `n` counting earlier items of the same text, so two identical items open on their own; its Box is keyed `box:` + that key so it can be scrolled into view. The open keys live in session state (`expanded`, shape `keys-2`), so they survive redraws and file reloads. **Done items** fold into one line per group, `▸ N done`, a Button keyed `done:<n>:<group title>` that opens to the `✓` lines (`success`, dimmed and struck through). The header count is the bare number of open items, the same folded or unfolded. **Quiet cards (style B, chosen from three mockups):** every card border is gray (`borderDimColor`) except Now's, which use `claude`. Group headers are bold and, like the marks, take the group's color: Now `claude`, Issues `error`, Ideas `merged`, the others the default text color; Backlog, Maybe and Done dim the header, mark and title. The older Chinese headings of these groups get the same looks. No `+` on the right as in To Do: the pane has no action behind it. Graphical surfaces keep the flat list in file order, with bare counts and no Buttons.
 - **Folding a whole group (terminal only, verified in the classic renderer on 2.1.318):** asked for as "fold Now so I only see its header, with the Next pile right below it". A group with a title and any items (open or done) gets a fold mark in a column of its own before its title, `▾` unfolded and `▸` folded, in the header's color; the title becomes a `plain` `Button` keyed `group:<n>:<title>` (`n` counting earlier groups of the same title), and the header row's Box is keyed `box:` + that key so an arrow can bring it into view. Folded, the group draws its header row alone, its title and the same bare open count as unfolded, `0` included (an earlier version showed worded open and done counts here, in Chinese; they were dropped when every header was made to show only what is left): no cards, no text lines, no done line, and the next group follows after the usual one-row group gap. An empty group, a group of text lines only, and the untitled lines before the first heading keep a plain, non-pressable title. The folded keys live in session state (`collapsed`, shape `keys-1`), separate from `expanded`, so a group survives redraws and file reloads folded and unfolds with the same cards open; a new session starts with everything unfolded. Header colors stay as they are (Now `claude`, Issues `error`, Ideas `merged`, Backlog, Maybe and Done dimmed); the header under the focus ring takes the accent (`suggestion`, bold, never dimmed) for mark and title, and the terminal also inverts a focused `plain` Button's label, so the selection shows whether the group is folded or not. Graphical surfaces ignore `collapsed` and draw no fold marks.
-- **Terminal keyboard (verified in the classic and the fullscreen renderer):** `ctrl+x tab` gives the pane the keyboard; the first Button has `autoFocus`, so the first Button (normally the first group's header) is selected at once. The selected card (the key a `ui.focus` hook stores in session state `focused`, shown only while the pane's `isFocused`) gets a **bold border in the accent** (`suggestion`), separate from whether it is open; a selected header is drawn in the accent instead. A focused pane's arrows normally scroll it, so a `ui.scroll` hook turns a person's arrow (`by` ±1, no `pointer`) into `$.ui.focus` on the previous or next Button and scrolls its card or header into view. The Buttons are walked in drawn order: a header, its cards, its done line, the next header, and a folded group's header alone (`pressableKeysOf(text, collapsed)`). The wheel, page keys, an arrow past the first or last Button, or one with nothing of the list selected are passed on to the engine; it scrolls the pane, and when the whole list fits it may move the ring back to the first Button instead (seen in the classic renderer). Tab walks the same Buttons, then the pane's close mark. Enter folds or unfolds the selected group, or opens or shuts the selected card or done line, and leaves the window where it is: a card opened near the bottom grows below the window, and the next arrow brings the following card into view. Esc returns to the prompt; nothing typed there is touched. No Button has a `hotkey`, so digits and letters stay free. A dim hint at the bottom, shown while anything is pressable, lists exactly these, in English for every list: `ctrl+x tab select · ↑↓ move · Enter open/shut · Esc back to prompt`.
+- **Terminal keyboard (verified in the classic and the fullscreen renderer):** `ctrl+x tab` gives the pane the keyboard; the first Button has `autoFocus`, so the first Button (normally the first group's header) is selected at once. The selected card (the key a `ui.focus` hook stores in session state `focused`, shown only while the pane's `isFocused`) gets a **bold border in the accent** (`suggestion`), separate from whether it is open; a selected header is drawn in the accent instead. A focused pane's arrows normally scroll it, so a `ui.scroll` hook turns a person's arrow (`by` ±1, no `pointer`) into `$.ui.focus` on the previous or next Button and scrolls its card or header into view. The Buttons are walked in drawn order: a header, its cards, its done line, the next header, and a folded group's header alone (`pressableKeysOf(text, collapsed)`). The wheel, page keys, an arrow past the first or last Button, or one with nothing of the list selected are passed on to the engine; it scrolls the pane, and when the whole list fits it may move the ring back to the first Button instead (seen in the classic renderer). Tab walks the same Buttons, then the pane's close mark. Enter folds or unfolds the selected group, or opens or shuts the selected card or done line, and leaves the window where it is: a card opened near the bottom grows below the window, and the next arrow brings the following card into view. Esc returns to the prompt; nothing typed there is touched. No Button has a `hotkey`, so digits and letters stay free. A dim hint at the bottom, shown while anything is pressable, lists exactly these in the list's language; the English hint reads `ctrl+x tab select · ↑↓ move · Enter open/shut · Esc back to prompt`.
 - Backlog, Maybe and Done are dimmed as a whole (title and items). Done holds checked-off items, so on the terminal they sit behind its `▸ N done` line like any group's finished items, and its header counts `0`.
 - An empty group shows `Nothing yet`.
 - **The mark never touches the text:** mark and text sit in a row with a gap (1 column in the terminal, `xs` on graphical surfaces). An early version had them touching in the CLI.
@@ -102,7 +104,7 @@ The rules are the whole "automatic upkeep" mechanism, so their wording matters:
 
 ### Compatibility with older lists
 
-The first versions used Chinese headings for Now, Next, Maybe, Issues and Ideas (Backlog stayed in English), and lists under them use a Chinese Done heading. Existing lists keep working: section matching is case-insensitive and trimmed, and the code matches these exact headings, which a test list must use verbatim: `现在` (Now) counts as the current group; `待定` (Maybe) and `已完成` (Done) as muted ones; `问题` (Issues) and `新想法` (Ideas) take their groups' colors. The Chinese Next heading, `接下来`, gets the default look like the English one. The rules tell conversations to keep the existing headings. Only the headings are matched: everything the pane adds (labels, done lines, the key hint) stays English for these lists.
+The first versions used Chinese headings for Now, Next, Maybe, Issues and Ideas (Backlog stayed in English), and lists under them use a Chinese Done heading. Existing lists keep working: section matching is case-insensitive and trimmed, and the code matches these exact headings, which a test list must use verbatim (written here as the escapes the code uses): `\u73b0\u5728` (Now) counts as the current group; `\u5f85\u5b9a` (Maybe) and `\u5df2\u5b8c\u6210` (Done) as muted ones; `\u95ee\u9898` (Issues) and `\u65b0\u60f3\u6cd5` (Ideas) take their groups' colors. The Chinese Next heading, `\u63a5\u4e0b\u6765`, gets the default look like the English one. The rules tell conversations to keep the existing headings. Such a list holds Chinese, so everything the pane adds (field labels, done lines, the key hint) is Chinese for it too.
 
 ### Code style
 
@@ -232,7 +234,7 @@ For a rebuilt copy, point the marketplace at your own repo or local folder inste
 - [ ] In a list with its own groups (no Done, different names), a conversation adds no groups and moves no items into the seven.
 - [ ] A conversation writing `- item` without `[ ]` is refused with the bad lines listed.
 - [ ] In a git worktree, the pane shows the main worktree's list.
-- [ ] A list with the old Chinese headings (see "Compatibility with older lists") shows the Chinese Now heading accented and the Chinese Maybe and Done headings dimmed, with English labels, done lines and key hint.
+- [ ] A list with the old Chinese headings (see "Compatibility with older lists") shows the Chinese Now heading accented and the Chinese Maybe and Done headings dimmed, with Chinese labels, done lines and key hint; a list with no Chinese in it gets English ones.
 - [ ] In the CLI (classic and fullscreen renderer): `ctrl+x tab` selects the first group header (drawn in blue), `↑` `↓` move between headers, cards and done lines and bring each into view, Enter opens or shuts the selected card alone, Esc returns to the prompt, and text typed in the prompt is neither sent nor changed.
 - [ ] In the CLI: every group header shows only a bare open count on the right (`4`; `0` when all done or empty), never the words "open" or "done". Enter on a selected header folds the group to that one row with the same count, the next group right below and the pane not scrolled; the arrows skip the folded cards; Enter again unfolds it with the same cards open; an empty group cannot be selected; a change to the file keeps it folded.
 - [ ] Two items with the same text open on their own; an open card stays open after the file changes.
@@ -241,7 +243,7 @@ For a rebuilt copy, point the marketplace at your own repo or local folder inste
 
 ## 8. Source files
 
-Every file in the repo except `README.md` (whose content is covered above) and the ignored working notes, exactly as in the commit that last updated this guide.
+Every file in the repo except `README.md` (whose content is covered above) and the ignored working notes, as in the commit that last updated this guide, with Chinese and full-width characters written as `\u` escapes (see "About the embedded code" at the top).
 
 ### `mods/todo-panel/.claude-plugin/plugin.json`
 
@@ -288,14 +290,13 @@ declare module 'claude-code' {
 ````ts
 // Reading docs/todo.md: lines into groups, and an item's text into its fields. Pure, no drawing.
 
-// An item written as fields (item｜status｜next step) is read by position.
-const FIELD_SEPARATOR = /｜| \| /
+// An item written as fields (item, status, next step, split by a full-width bar) is read by position.
+const FIELD_SEPARATOR = /\uff5c| \| /
 // Otherwise the first of these splits an item into a title and a note.
-const CAPTION_SEPARATORS = ['：', ': ', ' — '] as const
-// A source in brackets at the very end of an item: (source: …), or the older Chinese form in
-// full-width brackets that lists still carry. The greedy head makes it the last such bracket
-// when an item holds two.
-const SOURCE = /^(.*)[（(]\s*(?:来源|source)\s*[：:]\s*(.+?)\s*[）)]\s*$/is
+const CAPTION_SEPARATORS = ['\uff1a', ': ', ' — '] as const
+// A source in brackets at the very end of an item: the Chinese form in full-width brackets, or (source: …). The greedy head
+// makes it the last such bracket when an item holds two.
+const SOURCE = /^(.*)[\uff08(]\s*(?:\u6765\u6e90|source)\s*[\uff1a:]\s*(.+?)\s*[\uff09)]\s*$/is
 
 export type TodoLine =
   | { kind: 'heading'; text: string }
@@ -371,7 +372,7 @@ const splitSource = (text: string): { rest: string; source?: string } => {
 // field stays empty, so a next step is never shown as the status.
 const splitFields = (text: string): ItemFields | undefined => {
   const [title = '', status, next, ...notes] = text.split(FIELD_SEPARATOR).map(field => field.trim())
-  const fields = withDetails(title, { status, next, note: notes.filter(note => note !== '').join('｜') })
+  const fields = withDetails(title, { status, next, note: notes.filter(note => note !== '').join('\uff5c') })
 
   return title !== '' && hasDetails(fields) ? fields : undefined
 }
@@ -393,7 +394,7 @@ const splitCaption = (text: string): ItemFields => {
 }
 
 // A source at the end is read off first; then fields win over a note, so a colon inside a field
-// (issue：…) stays in its field.
+// (issue: …, with a full-width colon) stays in its field.
 export const splitItem = (text: string): ItemFields => {
   const { rest, source } = splitSource(text)
   const fields = splitFields(rest) ?? splitCaption(rest)
@@ -416,9 +417,9 @@ const TITLE = 'Todo'
 const TODO_PATH = 'docs/todo.md'
 const POLL_MS = 2000
 // Lists made before the headings were English use the Chinese names, so both count.
-const CURRENT_SECTIONS = ['now', '现在']
+const CURRENT_SECTIONS = ['now', '\u73b0\u5728']
 // A Done group, where a list has one, holds finished items and is dimmed like the parked groups.
-const MUTED_SECTIONS = ['backlog', 'maybe', '待定', 'done', '已完成']
+const MUTED_SECTIONS = ['backlog', 'maybe', '\u5f85\u5b9a', 'done', '\u5df2\u5b8c\u6210']
 const TEMPLATE = '## Now\n\n## Next\n\n## Backlog\n\n## Maybe\n\n## Issues\n\n## Ideas\n\n## Done\n'
 // A theme key, not a fixed hex, so the one accent follows light and dark.
 const ACCENT = 'suggestion'
@@ -432,6 +433,8 @@ const CARD_INSET = CARD_PADDING + 1
 // Done items sit under their done line's words, past its mark and the gap after it.
 const DONE_INSET = CARD_INSET + 2
 const SUMMARY_JOIN = ' · '
+// A list with any Chinese in it gets Chinese labels around its items.
+const CJK = /[\u3400-\u9fff]/
 
 const todoText = atom({ plugin: 'todo-panel', key: 'text' } as const, null, {
   shape: 'text-1',
@@ -455,15 +458,36 @@ const GROUP_KEY_PREFIX = 'group:'
 // view; a Button key always starts card:, done: or group:, so no Box key can equal one.
 const BOX_KEY_PREFIX = 'box:'
 
-// The words the terminal adds around items, in English whatever language the list is in.
-const LABELS = {
-  status: 'Status: ',
-  next: 'Next: ',
-  note: 'Note: ',
-  source: 'Source: ',
-  done: (count: number) => `${count} done`,
-  hint: 'ctrl+x tab select · ↑↓ move · Enter open/shut · Esc back to prompt',
-} as const
+// The words the terminal adds around items, in the list's own language.
+type Labels = {
+  status: string
+  next: string
+  note: string
+  source: string
+  done: (count: number) => string
+  hint: string
+}
+
+const LABELS: Record<'zh' | 'en', Labels> = {
+  zh: {
+    status: '\u72b6\u6001\uff1a',
+    next: '\u4e0b\u4e00\u6b65\uff1a',
+    note: '\u8bf4\u660e\uff1a',
+    source: '\u6765\u6e90\uff1a',
+    done: count => `\u5df2\u5b8c\u6210 ${count} \u9879`,
+    hint: 'ctrl+x tab \u9009\u4e2d · ↑↓ \u79fb\u52a8 · Enter \u5c55\u5f00/\u6536\u8d77 · Esc \u56de\u5230\u8f93\u5165\u6846',
+  },
+  en: {
+    status: 'Status: ',
+    next: 'Next: ',
+    note: 'Note: ',
+    source: 'Source: ',
+    done: count => `${count} done`,
+    hint: 'ctrl+x tab select · ↑↓ move · Enter open/shut · Esc back to prompt',
+  },
+}
+
+const labelsFor = (text: string) => (CJK.test(text) ? LABELS.zh : LABELS.en)
 
 type Host = {
   process: {
@@ -491,8 +515,8 @@ const isDoneItem = (line: BodyLine): line is ItemLine => line.kind === 'item' &&
 // here colors its header and marks, the others keep the default text color.
 const TERMINAL_GROUP_COLORS: readonly { names: readonly string[]; color: Color }[] = [
   { names: CURRENT_SECTIONS, color: 'claude' },
-  { names: ['issues', '问题'], color: 'error' },
-  { names: ['ideas', '新想法'], color: 'merged' },
+  { names: ['issues', '\u95ee\u9898'], color: 'error' },
+  { names: ['ideas', '\u65b0\u60f3\u6cd5'], color: 'merged' },
 ]
 const DONE_COLOR: Color = 'success'
 
@@ -603,8 +627,9 @@ const reveal = async ($: RevealHost, key: string) => {
   if (shown.deny !== undefined) await $.ui.scroll({ in: PANE, to: { key } }).catch(refusal)
 }
 
-// What the terminal's drawing reads beyond the list: the focused key, what is open or folded.
+// What the terminal's drawing reads beyond the list: labels, the focused key, what is open or folded.
 type TerminalView = {
+  labels: Labels
   selected: string | null
   firstKey: string | undefined
   isOpen: (key: string) => boolean
@@ -619,6 +644,7 @@ const toggled = (keys: readonly string[], key: string) =>
 
 const terminalViewFor = async (
   $: ToggleHost,
+  text: string,
   groups: readonly TerminalGroup[],
   isFocused: boolean,
 ): Promise<TerminalView> => {
@@ -629,6 +655,7 @@ const terminalViewFor = async (
 
   // Opening or shutting a card, or folding a group, leaves the window where it is.
   return {
+    labels: labelsFor(text),
     selected: isFocused ? focused : null,
     firstKey: pressableKeys(groups, collapsed)[0],
     isOpen: key => expanded.includes(key),
@@ -653,15 +680,15 @@ const markOf = (isOpenable: boolean, isOpen: boolean) => (!isOpenable ? '○' : 
 const autoFocusOf = (key: string, view: TerminalView) => (key === view.firstKey ? true : undefined)
 
 // Shut, a card shows its status and next step on one row, or its note when it has neither.
-const summaryOf = (fields: ItemFields) => {
-  const nextStep = fields.next === undefined ? undefined : `${LABELS.next}${fields.next}`
+const summaryOf = (fields: ItemFields, labels: Labels) => {
+  const nextStep = fields.next === undefined ? undefined : `${labels.next}${fields.next}`
   const line = [fields.status, nextStep].filter(part => part !== undefined).join(SUMMARY_JOIN)
 
   return line === '' ? fields.note : line
 }
 
 // Open, each field it has on a labeled line wrapped in full, its wrapped rows indented past the label.
-const drawDetails = ({ Box, Text }: Ui, fields: ItemFields, isMuted: boolean) =>
+const drawDetails = ({ Box, Text }: Ui, fields: ItemFields, labels: Labels, isMuted: boolean) =>
   DETAIL_NAMES.flatMap(name => {
     const value = fields[name]
     if (value === undefined) return []
@@ -669,7 +696,7 @@ const drawDetails = ({ Box, Text }: Ui, fields: ItemFields, isMuted: boolean) =>
     return [
       <Box flexDirection="row">
         <Box flexShrink={0}>
-          <Text dimColor>{LABELS[name]}</Text>
+          <Text dimColor>{labels[name]}</Text>
         </Box>
         <Box flexShrink={1}>
           <Text dimColor={isMuted} wrap="wrap">
@@ -717,7 +744,7 @@ const drawCard = (ui: Ui, card: Card, title: string, view: TerminalView) => {
   const isMuted = isNamed(MUTED_SECTIONS, title)
   const isOpenable = hasDetails(card.fields)
   const isOpen = isOpenable && view.isOpen(card.key)
-  const summary = summaryOf(card.fields)
+  const summary = summaryOf(card.fields, view.labels)
 
   return (
     <Box
@@ -731,7 +758,7 @@ const drawCard = (ui: Ui, card: Card, title: string, view: TerminalView) => {
       <Box flexDirection="column" flexShrink={1}>
         {drawCardTitle(ui, card, title, view)}
         {isOpen
-          ? drawDetails(ui, card.fields, isMuted)
+          ? drawDetails(ui, card.fields, view.labels, isMuted)
           : summary !== undefined && (
               <Text dimColor wrap="truncate-end">
                 {summary}
@@ -768,7 +795,7 @@ const drawDoneList = (ui: Ui, group: TerminalGroup, view: TerminalView): Drawn[]
         autoFocus={autoFocusOf(group.doneKey, view)}
         onPress={() => view.toggle(group.doneKey)}
       >
-        <Text dimColor>{LABELS.done(group.done.length)}</Text>
+        <Text dimColor>{view.labels.done(group.done.length)}</Text>
       </Button>
     </Box>
   )
@@ -871,7 +898,7 @@ const drawTerminal = (ui: Ui, groups: readonly TerminalGroup[], view: TerminalVi
       {groups.map(group => drawGroup(ui, group.group, SPACING.terminal.item, headerOf(group), bodyOf(group)))}
       {view.firstKey !== undefined && (
         <Text size="footnote" dimColor>
-          {LABELS.hint}
+          {view.labels.hint}
         </Text>
       )}
     </Box>
@@ -949,7 +976,7 @@ const ruleFor = (path: string) =>
     `How to keep it up to date:`,
     `- At the start of a conversation, read the list to see what is in progress.`,
     `- When a new item or decision comes up, write it into the group that fits.`,
-    `- When an item is done, change it to "- [x]"; if the list has a Done or 已完成 group, move it to the end of that group, otherwise leave it where it is, unless the project's rules say otherwise. Delete the line if it is dropped.`,
+    `- When an item is done, change it to "- [x]"; if the list has a Done or \u5df2\u5b8c\u6210 group, move it to the end of that group, otherwise leave it where it is, unless the project's rules say otherwise. Delete the line if it is dropped.`,
     `- Change only the relevant lines, and re-read the file before each change: another conversation may have just edited it.`,
   ].join('\n')
 
@@ -1087,7 +1114,7 @@ export const register: Register = on => {
     if (e.surface !== 'terminal') return drawGraphical(ui, text)
 
     const groups = terminalGroups(text)
-    const view = await terminalViewFor($, groups, e.props.isFocused)
+    const view = await terminalViewFor($, text, groups, e.props.isFocused)
     return drawTerminal(ui, groups, view)
   })
 }
@@ -1149,17 +1176,16 @@ test('groupTodo counts open items and keeps empty groups', async () => {
   ])
 })
 
-// The source uses the older Chinese form, in full-width brackets, which lists still carry.
-const NEW_ITEM = 'loop time limit｜reviewed, waiting to merge｜ask to merge after the F9 test（来源：user 2026-11-03）'
+const NEW_ITEM = '\u5faa\u73af\u65f6\u95f4\u4e0a\u9650\uff5c\u5df2\u590d\u5ba1\uff0c\u5f85\u5408\u5165\uff5cF9 \u5b9e\u6d4b\u7ed3\u675f\u540e\u7533\u8bf7\u5408\u5165\uff08\u6765\u6e90\uff1a\u7528\u6237 2026-11-03\uff09'
 
-test('splitItem reads item｜status｜next step by position, and a source in full-width brackets', async () => {
+test('splitItem reads item\uff5cstatus\uff5cnext step\uff08\u6765\u6e90\uff1a…\uff09 by position', async () => {
   expect(splitItem(NEW_ITEM)).toEqual({
-    title: 'loop time limit',
-    status: 'reviewed, waiting to merge',
-    next: 'ask to merge after the F9 test',
-    source: 'user 2026-11-03',
+    title: '\u5faa\u73af\u65f6\u95f4\u4e0a\u9650',
+    status: '\u5df2\u590d\u5ba1\uff0c\u5f85\u5408\u5165',
+    next: 'F9 \u5b9e\u6d4b\u7ed3\u675f\u540e\u7533\u8bf7\u5408\u5165',
+    source: '\u7528\u6237 2026-11-03',
   })
-  expect(splitItem('issue：read range｜cause unknown')).toEqual({ title: 'issue：read range', status: 'cause unknown' })
+  expect(splitItem('\u95ee\u9898\uff1a\u8bfb\u53d6\u8303\u56f4\uff5c\u539f\u56e0\u672a\u67e5')).toEqual({ title: '\u95ee\u9898\uff1a\u8bfb\u53d6\u8303\u56f4', status: '\u539f\u56e0\u672a\u67e5' })
   expect(splitItem('limit | merged | verify | asked twice (source: review)')).toEqual({
     title: 'limit',
     status: 'merged',
@@ -1170,36 +1196,36 @@ test('splitItem reads item｜status｜next step by position, and a source in ful
 })
 
 test('splitItem leaves a missing field out and never moves a later field into its place', async () => {
-  expect(splitItem('limit｜｜merge after the test')).toEqual({ title: 'limit', next: 'merge after the test' })
+  expect(splitItem('limit\uff5c\uff5cmerge after the test')).toEqual({ title: 'limit', next: 'merge after the test' })
   expect(splitItem('loop limit | merged |  | verify on device')).toEqual({
     title: 'loop limit',
     status: 'merged',
     note: 'verify on device',
   })
-  expect(splitItem('limit｜merged')).toEqual({ title: 'limit', status: 'merged' })
+  expect(splitItem('limit\uff5cmerged')).toEqual({ title: 'limit', status: 'merged' })
 })
 
-test('splitItem reads an older title：note item, and a source on any item', async () => {
-  expect(splitItem('worktree check：shows the main copy')).toEqual({ title: 'worktree check', note: 'shows the main copy' })
+test('splitItem reads an older title\uff1anote item, and a source on any item', async () => {
+  expect(splitItem('worktree \u9a8c\u6536\uff1a\u663e\u793a\u4e3b\u5de5\u4f5c\u533a\u90a3\u4efd')).toEqual({ title: 'worktree \u9a8c\u6536', note: '\u663e\u793a\u4e3b\u5de5\u4f5c\u533a\u90a3\u4efd' })
   expect(splitItem('release ticket: DARE-1 DARE-2')).toEqual({ title: 'release ticket', note: 'DARE-1 DARE-2' })
   expect(splitItem('ship it — before Friday: no later')).toEqual({ title: 'ship it', note: 'before Friday: no later' })
-  expect(splitItem(' ：x — y')).toEqual({ title: '：x', note: 'y' })
-  expect(splitItem('ship：before Friday（来源：review report）')).toEqual({
+  expect(splitItem(' \uff1ax — y')).toEqual({ title: '\uff1ax', note: 'y' })
+  expect(splitItem('ship\uff1abefore Friday\uff08\u6765\u6e90\uff1a\u5ba1\u6838\u62a5\u544a\uff09')).toEqual({
     title: 'ship',
     note: 'before Friday',
-    source: 'review report',
+    source: '\u5ba1\u6838\u62a5\u544a',
   })
   expect(splitItem('ship (source: review)')).toEqual({ title: 'ship', source: 'review' })
-  expect(splitItem('ship｜done (来源: a)｜check (来源: b)')).toEqual({
+  expect(splitItem('ship\uff5cdone (\u6765\u6e90: a)\uff5ccheck (\u6765\u6e90: b)')).toEqual({
     title: 'ship',
-    status: 'done (来源: a)',
+    status: 'done (\u6765\u6e90: a)',
     next: 'check',
     source: 'b',
   })
 })
 
 test('splitItem leaves a title whole when nothing follows a separator', async () => {
-  const wholes = ['see https://x.io at 10:30', '：only detail', 'ends with a colon:', 'plain item', '｜only detail', 'a (sourced later)']
+  const wholes = ['see https://x.io at 10:30', '\uff1aonly detail', 'ends with a colon:', 'plain item', '\uff5conly detail', 'a (sourced later)']
   for (const text of wholes) {
     expect(splitItem(text)).toEqual({ title: text })
   }
@@ -1241,27 +1267,27 @@ const pressTitle = async (ui: Drawing, title: RegExp) => {
   await ui.press({ key: button?.key ?? '' })
 }
 
-const CARD_LIST = '## Next\n- [ ] limit｜built, not merged｜merge after the test\n- [ ] ship：before Friday\n- [ ] plain item\n'
+const CARD_LIST = '## Next\n- [ ] limit\uff5cbuilt, not merged\uff5cmerge after the test\n- [ ] ship\uff1abefore Friday\n- [ ] plain item\n'
 const LIMIT_SHUT = '▸limitbuilt, not merged · Next: merge after the test'
 const SHIP_SHUT = '▸shipbefore Friday'
-const DONE_LINE = /^\d+ done$/
-const HINT = 'ctrl+x tab select · ↑↓ move · Enter open/shut · Esc back to prompt'
 
-const LIMIT_SUMMARY = 'reviewed, waiting to merge · Next: ask to merge after the F9 test'
-
-test('on the terminal a shut card shows ▸, the title and status · next step on one cut row, in English under a Chinese heading too', async ($, on) => {
-  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(`## 现在\n- [ ] ${NEW_ITEM}\n- [ ] watch｜too few samples\n- [ ] title only\n`))
+test('on the terminal a shut card shows ▸, the title and status · next step on one cut row', async ($, on) => {
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(`## \u73b0\u5728\n- [ ] ${NEW_ITEM}\n- [ ] \u89c2\u5bdf\uff5c\u6837\u672c\u4e0d\u8db3\n- [ ] \u53ea\u6709\u6807\u9898\n`))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect(await cardTexts(ui)).toEqual([`▸loop time limit${LIMIT_SUMMARY}`, '▸watchtoo few samples', '○title only'])
-  expect(await wrapsOf(ui, /^reviewed, waiting/)).toEqual(['truncate-end'])
-  expect((await ui.findAll({ type: 'Button' })).map(button => button.text)).toEqual(['现在', 'loop time limit', 'watch'])
-  expect(await ui.find({ type: 'Text', text: /2026-11-03/ })).toBeUndefined()
+  expect(await cardTexts(ui)).toEqual([
+    '▸\u5faa\u73af\u65f6\u95f4\u4e0a\u9650\u5df2\u590d\u5ba1\uff0c\u5f85\u5408\u5165 · \u4e0b\u4e00\u6b65\uff1aF9 \u5b9e\u6d4b\u7ed3\u675f\u540e\u7533\u8bf7\u5408\u5165',
+    '▸\u89c2\u5bdf\u6837\u672c\u4e0d\u8db3',
+    '○\u53ea\u6709\u6807\u9898',
+  ])
+  expect(await wrapsOf(ui, /\u4e0b\u4e00\u6b65\uff1aF9/)).toEqual(['truncate-end'])
+  expect((await ui.findAll({ type: 'Button' })).map(button => button.text)).toEqual(['\u73b0\u5728', '\u5faa\u73af\u65f6\u95f4\u4e0a\u9650', '\u89c2\u5bdf'])
+  expect(await ui.find({ type: 'Text', text: /\u6765\u6e90/ })).toBeUndefined()
   await ui.unmount()
 })
 
-test('on the terminal a shut card with no status or next step shows its note', async ($, on) => {
-  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(`${CARD_LIST}- [ ] gap｜｜fill it\n`))
+test('on the terminal a shut card with no status or next step shows its note, and an English list English labels', async ($, on) => {
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(`${CARD_LIST}- [ ] gap\uff5c\uff5cfill it\n`))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
   expect(await cardTexts(ui)).toEqual([LIMIT_SHUT, SHIP_SHUT, '○plain item', '▸gapNext: fill it'])
@@ -1270,30 +1296,26 @@ test('on the terminal a shut card with no status or next step shows its note', a
 })
 
 test('on the terminal pressing a title opens that card alone into labeled lines, and pressing again shuts it', async ($, on) => {
-  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(`## Now\n- [ ] ${NEW_ITEM}\n- [ ] ship：before Friday\n`))
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(`## \u73b0\u5728\n- [ ] ${NEW_ITEM}\n- [ ] ship\uff1abefore Friday\n`))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  await pressTitle(ui, /^loop time limit$/)
+  await pressTitle(ui, /^\u5faa\u73af\u65f6\u95f4\u4e0a\u9650$/)
   expect(await cardTexts(ui)).toEqual([
-    '▾loop time limitStatus: reviewed, waiting to mergeNext: ask to merge after the F9 testSource: user 2026-11-03',
+    '▾\u5faa\u73af\u65f6\u95f4\u4e0a\u9650\u72b6\u6001\uff1a\u5df2\u590d\u5ba1\uff0c\u5f85\u5408\u5165\u4e0b\u4e00\u6b65\uff1aF9 \u5b9e\u6d4b\u7ed3\u675f\u540e\u7533\u8bf7\u5408\u5165\u6765\u6e90\uff1a\u7528\u6237 2026-11-03',
     '▸shipbefore Friday',
   ])
-  expect(await wrapsOf(ui, /^(reviewed, waiting to merge|ask to merge after the F9 test|user 2026-11-03)$/)).toEqual([
-    'wrap',
-    'wrap',
-    'wrap',
-  ])
+  expect(await wrapsOf(ui, /^(\u5df2\u590d\u5ba1\uff0c\u5f85\u5408\u5165|F9 \u5b9e\u6d4b\u7ed3\u675f\u540e\u7533\u8bf7\u5408\u5165|\u7528\u6237 2026-11-03)$/)).toEqual(['wrap', 'wrap', 'wrap'])
 
   await pressTitle(ui, /^ship$/)
-  expect((await cardTexts(ui))[1]).toBe('▾shipNote: before Friday')
+  expect((await cardTexts(ui))[1]).toBe('▾ship\u8bf4\u660e\uff1abefore Friday')
 
-  await pressTitle(ui, /^loop time limit$/)
-  expect((await cardTexts(ui))[0]).toBe(`▸loop time limit${LIMIT_SUMMARY}`)
+  await pressTitle(ui, /^\u5faa\u73af\u65f6\u95f4\u4e0a\u9650$/)
+  expect((await cardTexts(ui))[0]).toBe('▸\u5faa\u73af\u65f6\u95f4\u4e0a\u9650\u5df2\u590d\u5ba1\uff0c\u5f85\u5408\u5165 · \u4e0b\u4e00\u6b65\uff1aF9 \u5b9e\u6d4b\u7ed3\u675f\u540e\u7533\u8bf7\u5408\u5165')
   await ui.unmount()
 })
 
-test('on the terminal an open card shows only the fields it has, under English labels', async ($, on) => {
-  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf('## Next\n- [ ] gap｜｜fill it (source: review)\n'))
+test('on the terminal an open card shows only the fields it has, under English labels in an English list', async ($, on) => {
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf('## Next\n- [ ] gap\uff5c\uff5cfill it (source: review)\n'))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
   await pressTitle(ui, /^gap$/)
@@ -1302,7 +1324,7 @@ test('on the terminal an open card shows only the fields it has, under English l
 })
 
 test('on the terminal two items with the same text open and shut on their own', async ($, on) => {
-  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf('## Next\n- [ ] same：x\n- [ ] same：x\n'))
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf('## Next\n- [ ] same\uff1ax\n- [ ] same\uff1ax\n'))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const keys = await cardKeys(ui)
 
@@ -1313,7 +1335,7 @@ test('on the terminal two items with the same text open and shut on their own', 
 })
 
 test('on the terminal no Box shares a key with a Button, and no two share one, whatever the item or heading text', async ($, on) => {
-  const list = '## card:0:a：x\n- [ ] a：x\n- [ ] a：x#box\n## box:card:0:a：x\n- [x] a：x\n## card:0:a：x\n- [ ] group:0:card:0:a：x：y\n'
+  const list = '## card:0:a\uff1ax\n- [ ] a\uff1ax\n- [ ] a\uff1ax#box\n## box:card:0:a\uff1ax\n- [x] a\uff1ax\n## card:0:a\uff1ax\n- [ ] group:0:card:0:a\uff1ax\uff1ay\n'
   on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(list))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const keys = await buttonKeys(ui)
@@ -1328,7 +1350,7 @@ test('on the terminal no Box shares a key with a Button, and no two share one, w
 })
 
 test('on the terminal an open card stays open through a redraw and a change to the file', async ($, on) => {
-  let text = `## Next\n- [ ] same：x\n- [ ] same：x\n${CARD_LIST.replace('## Next\n', '')}`
+  let text = `## Next\n- [ ] same\uff1ax\n- [ ] same\uff1ax\n${CARD_LIST.replace('## Next\n', '')}`
   on('state.get', { plugin: 'todo-panel', key: 'text' }, () => textOf(text)())
 
   const first = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -1336,7 +1358,7 @@ test('on the terminal an open card stays open through a redraw and a change to t
   await first.press({ key: (await cardKeys(first))[1] ?? '' })
   await first.unmount()
 
-  text = `## Now\n- [ ] new：item\n${text}`
+  text = `## Now\n- [ ] new\uff1aitem\n${text}`
   const again = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
   expect(await cardTexts(again)).toEqual([
@@ -1351,14 +1373,14 @@ test('on the terminal an open card stays open through a redraw and a change to t
 })
 
 test('on the terminal done items fold into one line per group that opens on press', async ($, on) => {
-  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf('## Now\n- [x] done B\n- [ ] do A：why\n- [x] done C\n## Next\n- [x] done D\n'))
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf('## \u73b0\u5728\n- [x] done B\n- [ ] do A\uff1awhy\n- [x] done C\n## \u63a5\u4e0b\u6765\n- [x] done D\n'))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  const summaries = await ui.findAll({ type: 'Button', text: DONE_LINE })
+  const summaries = await ui.findAll({ type: 'Button', text: /^\u5df2\u5b8c\u6210/ })
   const texts = async () => (await ui.findAll({ type: 'Text' })).map(found => found.text)
 
-  expect(summaries.map(button => button.text)).toEqual(['2 done', '1 done'])
+  expect(summaries.map(button => button.text)).toEqual(['\u5df2\u5b8c\u6210 2 \u9879', '\u5df2\u5b8c\u6210 1 \u9879'])
   expect(await ui.find({ type: 'Text', text: /^done/ })).toBeUndefined()
-  expect((await texts()).indexOf('do A')).toBeLessThan((await texts()).indexOf('2 done'))
+  expect((await texts()).indexOf('do A')).toBeLessThan((await texts()).indexOf('\u5df2\u5b8c\u6210 2 \u9879'))
 
   await ui.press({ key: summaries[0]?.key ?? '' })
   const shown = await ui.findAll({ type: 'Text', text: /^done/ })
@@ -1367,25 +1389,25 @@ test('on the terminal done items fold into one line per group that opens on pres
     ['done C', true],
   ])
   expect((await ui.find({ type: 'Text', text: /^✓$/ }))?.props.color).toBe('success')
-  expect((await texts()).indexOf('done C')).toBeLessThan((await texts()).indexOf('1 done'))
+  expect((await texts()).indexOf('done C')).toBeLessThan((await texts()).indexOf('\u5df2\u5b8c\u6210 1 \u9879'))
   await ui.unmount()
 })
 
-test('on the terminal a group header counts its open items as a bare number, and its done line is English, under either heading language', async ($, on) => {
+test('on the terminal a group header counts its open items as a bare number, in either language', async ($, on) => {
   let text = ''
   on('state.get', { plugin: 'todo-panel', key: 'text' }, () => textOf(text)())
 
-  for (const [list, header] of [
-    ['## 现在\n- [ ] A\n- [ ] B\n- [x] C\n', '▾现在2'],
-    ['## Now\n- [ ] A\n- [ ] B\n- [x] C\n', '▾Now2'],
+  for (const [list, header, done] of [
+    ['## \u73b0\u5728\n- [ ] A\n- [ ] B\n- [x] C\n', '▾\u73b0\u57282', '\u5df2\u5b8c\u6210 1 \u9879'],
+    ['## Now\n- [ ] A\n- [ ] B\n- [x] C\n', '▾Now2', '1 done'],
   ] as const) {
     text = list
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
     expect(await headersOf(ui)).toEqual([header])
     expect((await ui.find({ type: 'Text', text: /^2$/ }))?.props.tabular).toBe(true)
-    expect(await ui.find({ type: 'Text', text: /\d open|open \d/ })).toBeUndefined()
-    expect((await ui.find({ type: 'Button', text: DONE_LINE }))?.text).toBe('1 done')
+    expect(await ui.find({ type: 'Text', text: /\u672a\u5b8c\u6210|\d open/ })).toBeUndefined()
+    expect((await ui.find({ type: 'Button', text: done }))?.text).toBe(done)
     await ui.unmount()
   }
 })
@@ -1430,17 +1452,17 @@ const arrowBy = (by: number, extra: Partial<UiScrollInput> = {}): UiScrollInput 
 })
 
 test('the up and down arrows step along the terminal Buttons in drawn order, and stop at either end', async () => {
-  const keys = pressableKeysOf(`## Now\n- [ ] plain\n- [x] done\n${CARD_LIST}- [ ] same：x\n- [ ] same：x\n`)
+  const keys = pressableKeysOf(`## Now\n- [ ] plain\n- [x] done\n${CARD_LIST}- [ ] same\uff1ax\n- [ ] same\uff1ax\n`)
   const [nowHeader, nowDone, nextHeader, limit, ship, first, second] = keys
 
   expect(keys).toEqual([
     'group:0:Now',
     'done:0:Now',
     'group:0:Next',
-    'card:0:limit｜built, not merged｜merge after the test',
-    'card:0:ship：before Friday',
-    'card:0:same：x',
-    'card:1:same：x',
+    'card:0:limit\uff5cbuilt, not merged\uff5cmerge after the test',
+    'card:0:ship\uff1abefore Friday',
+    'card:0:same\uff1ax',
+    'card:1:same\uff1ax',
   ])
   expect(arrowTarget(keys, limit ?? '', arrowBy(1))).toBe(ship)
   expect(arrowTarget(keys, ship ?? '', arrowBy(-1))).toBe(limit)
@@ -1453,36 +1475,34 @@ test('the up and down arrows step along the terminal Buttons in drawn order, and
 })
 
 test('only a titled group with items has a header Button: an empty, a text-only or an untitled group has none', async () => {
-  expect(pressableKeysOf('a stray line\n- [ ] loose：x\n## Maybe\n## Notes\nsome text\n## Now\n- [ ] plain\n')).toEqual([
-    'card:0:loose：x',
+  expect(pressableKeysOf('a stray line\n- [ ] loose\uff1ax\n## Maybe\n## Notes\nsome text\n## Now\n- [ ] plain\n')).toEqual([
+    'card:0:loose\uff1ax',
     'group:0:Now',
   ])
 })
 
-const FOLD_LIST = '## Now\n- [ ] do A：why\n- [ ] do B\n- [x] done C\n## Next\n- [ ] do D｜in progress\n## Maybe\n'
-const FOLD_KEYS = ['group:0:Now', 'card:0:do A：why', 'done:0:Now', 'group:0:Next', 'card:0:do D｜in progress']
-const NOW_FOLDED_KEYS = ['group:0:Now', 'group:0:Next', 'card:0:do D｜in progress']
-const FOLD_HEADERS = ['▾Now2', '▾Next1', 'Maybe0']
-const FOLD_CARDS = ['▸do Awhy', '○do B', '▸do Din progress']
+const FOLD_LIST = '## \u73b0\u5728\n- [ ] \u7532\uff1a\u4e3a\u4ec0\u4e48\n- [ ] \u4e59\n- [x] \u4e19\n## \u63a5\u4e0b\u6765\n- [ ] \u4e01\uff5c\u8fdb\u884c\u4e2d\n## \u5f85\u5b9a\n'
+const FOLD_KEYS = ['group:0:\u73b0\u5728', 'card:0:\u7532\uff1a\u4e3a\u4ec0\u4e48', 'done:0:\u73b0\u5728', 'group:0:\u63a5\u4e0b\u6765', 'card:0:\u4e01\uff5c\u8fdb\u884c\u4e2d']
+const NOW_FOLDED_KEYS = ['group:0:\u73b0\u5728', 'group:0:\u63a5\u4e0b\u6765', 'card:0:\u4e01\uff5c\u8fdb\u884c\u4e2d']
 
 test('on the terminal pressing a header folds its group to the header and count, the next group right below, and pressing again unfolds it', async ($, on) => {
   on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(FOLD_LIST))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect(await headersOf(ui)).toEqual(FOLD_HEADERS)
-  expect(await cardTexts(ui)).toEqual(FOLD_CARDS)
+  expect(await headersOf(ui)).toEqual(['▾\u73b0\u57282', '▾\u63a5\u4e0b\u67651', '\u5f85\u5b9a0'])
+  expect(await cardTexts(ui)).toEqual(['▸\u7532\u4e3a\u4ec0\u4e48', '○\u4e59', '▸\u4e01\u8fdb\u884c\u4e2d'])
 
-  await pressTitle(ui, /^Now$/)
+  await pressTitle(ui, /^\u73b0\u5728$/)
   const texts = await textsOf(ui)
-  expect(await headersOf(ui)).toEqual(['▸Now2', '▾Next1', 'Maybe0'])
-  expect(texts.slice(texts.indexOf('Now'), texts.indexOf('Next') + 1)).toEqual(['Now', '2', '▾', 'Next'])
-  expect(await cardTexts(ui)).toEqual(['▸do Din progress'])
-  expect(await ui.find({ type: 'Button', text: DONE_LINE })).toBeUndefined()
+  expect(await headersOf(ui)).toEqual(['▸\u73b0\u57282', '▾\u63a5\u4e0b\u67651', '\u5f85\u5b9a0'])
+  expect(texts.slice(texts.indexOf('\u73b0\u5728'), texts.indexOf('\u63a5\u4e0b\u6765') + 1)).toEqual(['\u73b0\u5728', '2', '▾', '\u63a5\u4e0b\u6765'])
+  expect(await cardTexts(ui)).toEqual(['▸\u4e01\u8fdb\u884c\u4e2d'])
+  expect(await ui.find({ type: 'Button', text: /^\u5df2\u5b8c\u6210/ })).toBeUndefined()
 
-  await pressTitle(ui, /^Now$/)
-  expect(await headersOf(ui)).toEqual(FOLD_HEADERS)
-  expect(await cardTexts(ui)).toEqual(FOLD_CARDS)
-  expect((await ui.find({ type: 'Button', text: DONE_LINE }))?.text).toBe('1 done')
+  await pressTitle(ui, /^\u73b0\u5728$/)
+  expect(await headersOf(ui)).toEqual(['▾\u73b0\u57282', '▾\u63a5\u4e0b\u67651', '\u5f85\u5b9a0'])
+  expect(await cardTexts(ui)).toEqual(['▸\u7532\u4e3a\u4ec0\u4e48', '○\u4e59', '▸\u4e01\u8fdb\u884c\u4e2d'])
+  expect((await ui.find({ type: 'Button', text: /^\u5df2\u5b8c\u6210/ }))?.text).toBe('\u5df2\u5b8c\u6210 1 \u9879')
   await ui.unmount()
 })
 
@@ -1490,8 +1510,8 @@ test('on the terminal an empty group keeps a plain header with no mark that cann
   on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(FOLD_LIST))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect((await ui.find({ type: 'Text', text: /^Maybe$/ }))?.props.dimColor).toBe(true)
-  expect(await ui.find({ type: 'Button', text: /^Maybe$/ })).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: /^\u5f85\u5b9a$/ }))?.props.dimColor).toBe(true)
+  expect(await ui.find({ type: 'Button', text: /^\u5f85\u5b9a$/ })).toBeUndefined()
   expect((await ui.find({ type: 'Text', text: /^Nothing yet$/ }))?.text).toBe('Nothing yet')
   await ui.unmount()
 })
@@ -1501,33 +1521,48 @@ test('on the terminal a folded group stays folded through a redraw and a change 
   on('state.get', { plugin: 'todo-panel', key: 'text' }, () => textOf(text)())
 
   const first = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await pressTitle(first, /^do A$/)
-  await pressTitle(first, /^Now$/)
+  await pressTitle(first, /^\u7532$/)
+  await pressTitle(first, /^\u73b0\u5728$/)
   await first.unmount()
 
-  text = `## Issues\n- [ ] new：item\n${FOLD_LIST}`
+  text = `## \u95ee\u9898\n- [ ] \u65b0\uff1a\u9879\n${FOLD_LIST}`
   const again = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await headersOf(again)).toEqual(['▾Issues1', '▸Now2', '▾Next1', 'Maybe0'])
-  expect(await cardTexts(again)).toEqual(['▸newitem', '▸do Din progress'])
+  expect(await headersOf(again)).toEqual(['▾\u95ee\u98981', '▸\u73b0\u57282', '▾\u63a5\u4e0b\u67651', '\u5f85\u5b9a0'])
+  expect(await cardTexts(again)).toEqual(['▸\u65b0\u9879', '▸\u4e01\u8fdb\u884c\u4e2d'])
 
-  await pressTitle(again, /^Now$/)
-  expect(await cardTexts(again)).toEqual(['▸newitem', '▾do ANote: why', '○do B', '▸do Din progress'])
+  await pressTitle(again, /^\u73b0\u5728$/)
+  expect(await cardTexts(again)).toEqual(['▸\u65b0\u9879', '▾\u7532\u8bf4\u660e\uff1a\u4e3a\u4ec0\u4e48', '○\u4e59', '▸\u4e01\u8fdb\u884c\u4e2d'])
   await again.unmount()
 })
 
 test('on the terminal a header shows the same bare open count folded or not, 0 when all are done or it is empty', async ($, on) => {
-  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf('## Now\n- [x] A\n- [x] B\n## Next\n- [ ] C\n## Maybe\n'))
-  const unfolded = ['▾Now0', '▾Next1', 'Maybe0']
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  const headerKeys = (await buttonKeys(ui)).filter(key => key.startsWith('group:'))
-  expect(await headersOf(ui)).toEqual(unfolded)
+  let text = ''
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, () => textOf(text)())
 
-  for (const key of headerKeys) await ui.press({ key })
-  expect(await headersOf(ui)).toEqual(['▸Now0', '▸Next1', 'Maybe0'])
+  for (const [list, unfolded, folded] of [
+    [
+      '## \u73b0\u5728\n- [x] A\n- [x] B\n## \u63a5\u4e0b\u6765\n- [ ] C\n## \u5f85\u5b9a\n',
+      ['▾\u73b0\u57280', '▾\u63a5\u4e0b\u67651', '\u5f85\u5b9a0'],
+      ['▸\u73b0\u57280', '▸\u63a5\u4e0b\u67651', '\u5f85\u5b9a0'],
+    ],
+    [
+      '## Now\n- [x] A\n- [x] B\n## Next\n- [ ] C\n## Maybe\n',
+      ['▾Now0', '▾Next1', 'Maybe0'],
+      ['▸Now0', '▸Next1', 'Maybe0'],
+    ],
+  ] as const) {
+    text = list
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const headerKeys = (await buttonKeys(ui)).filter(key => key.startsWith('group:'))
+    expect(await headersOf(ui)).toEqual(unfolded)
 
-  for (const key of headerKeys) await ui.press({ key })
-  expect(await headersOf(ui)).toEqual(unfolded)
-  await ui.unmount()
+    for (const key of headerKeys) await ui.press({ key })
+    expect(await headersOf(ui)).toEqual(folded)
+
+    for (const key of headerKeys) await ui.press({ key })
+    expect(await headersOf(ui)).toEqual(unfolded)
+    await ui.unmount()
+  }
 })
 
 test('the arrows and Tab walk headers, cards and done lines as drawn, skipping a folded group', async ($, on) => {
@@ -1537,11 +1572,11 @@ test('the arrows and Tab walk headers, cards and done lines as drawn, skipping a
   expect(pressableKeysOf(FOLD_LIST)).toEqual(FOLD_KEYS)
   expect(await buttonKeys(ui)).toEqual(FOLD_KEYS)
 
-  await pressTitle(ui, /^Now$/)
-  expect(pressableKeysOf(FOLD_LIST, ['group:0:Now'])).toEqual(NOW_FOLDED_KEYS)
+  await pressTitle(ui, /^\u73b0\u5728$/)
+  expect(pressableKeysOf(FOLD_LIST, ['group:0:\u73b0\u5728'])).toEqual(NOW_FOLDED_KEYS)
   expect(await buttonKeys(ui)).toEqual(NOW_FOLDED_KEYS)
-  expect(arrowTarget(NOW_FOLDED_KEYS, 'group:0:Now', arrowBy(1))).toBe('group:0:Next')
-  expect(arrowTarget(NOW_FOLDED_KEYS, 'group:0:Next', arrowBy(-1))).toBe('group:0:Now')
+  expect(arrowTarget(NOW_FOLDED_KEYS, 'group:0:\u73b0\u5728', arrowBy(1))).toBe('group:0:\u63a5\u4e0b\u6765')
+  expect(arrowTarget(NOW_FOLDED_KEYS, 'group:0:\u63a5\u4e0b\u6765', arrowBy(-1))).toBe('group:0:\u73b0\u5728')
   await ui.unmount()
 })
 
@@ -1556,19 +1591,19 @@ test('on the terminal the header under the focus is drawn in the accent, folded 
     (await ui.findAll({ type: 'Text', text: /^[▾▸]$/ })).map(mark => mark.props.color)
 
   const ui = await $.ui.mount({ ...FOCUSED_PANE, surface: 'terminal' })
-  await $.ui.focus(focusBy('group:0:Now'))
-  expect(await headerLook(ui, /^Now$/)).toEqual(['suggestion', 'bold', false])
-  expect(await headerLook(ui, /^Next$/)).toEqual([undefined, 'semibold', false])
+  await $.ui.focus(focusBy('group:0:\u73b0\u5728'))
+  expect(await headerLook(ui, /^\u73b0\u5728$/)).toEqual(['suggestion', 'bold', false])
+  expect(await headerLook(ui, /^\u63a5\u4e0b\u6765$/)).toEqual([undefined, 'semibold', false])
   expect((await cardsOf(ui)).map(card => card.props.borderStyle)).toEqual(['round', 'round', 'round'])
 
-  await ui.press({ key: 'group:0:Now' })
-  expect((await headersOf(ui))[0]).toBe('▸Now2')
-  expect(await headerLook(ui, /^Now$/)).toEqual(['suggestion', 'bold', false])
+  await ui.press({ key: 'group:0:\u73b0\u5728' })
+  expect((await headersOf(ui))[0]).toBe('▸\u73b0\u57282')
+  expect(await headerLook(ui, /^\u73b0\u5728$/)).toEqual(['suggestion', 'bold', false])
   expect((await markColors(ui))[0]).toBe('suggestion')
   await ui.unmount()
 
   const away = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await headerLook(away, /^Now$/)).toEqual(['claude', 'semibold', false])
+  expect(await headerLook(away, /^\u73b0\u5728$/)).toEqual(['claude', 'semibold', false])
   expect((await markColors(away))[0]).toBe('claude')
   await away.unmount()
 })
@@ -1576,15 +1611,15 @@ test('on the terminal the header under the focus is drawn in the accent, folded 
 test('graphical surfaces ignore folding: every group stays whole, with no fold marks', async ($, on) => {
   on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf(FOLD_LIST))
   const terminal = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await pressTitle(terminal, /^Now$/)
+  await pressTitle(terminal, /^\u73b0\u5728$/)
   await terminal.unmount()
 
   for (const surface of GRAPHICAL) {
     const ui = await $.ui.mount({ ...PANE, surface })
     const texts = await textsOf(ui)
 
-    expect(await headersOf(ui)).toEqual(['Now2', 'Next1', 'Maybe'])
-    expect(['do A：why', 'do B', 'done C'].every(item => texts.includes(item))).toBe(true)
+    expect(await headersOf(ui)).toEqual(['\u73b0\u57282', '\u63a5\u4e0b\u67651', '\u5f85\u5b9a'])
+    expect(['\u7532\uff1a\u4e3a\u4ec0\u4e48', '\u4e59', '\u4e19'].every(item => texts.includes(item))).toBe(true)
     expect(await ui.findAll({ type: 'Button' })).toHaveLength(0)
     await ui.unmount()
   }
@@ -1623,22 +1658,22 @@ test('on the terminal the wheel, page keys, and arrows past the end or with no c
   await ui.unmount()
 })
 
-test('on the terminal an English key hint sits at the bottom when anything can be pressed, and nowhere else', async ($, on) => {
+test('on the terminal a key hint sits at the bottom when anything can be pressed, and nowhere else', async ($, on) => {
   let text = CARD_LIST
   on('state.get', { plugin: 'todo-panel', key: 'text' }, () => textOf(text)())
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const texts = await ui.findAll({ type: 'Text' })
-  expect(texts.at(-1)?.text).toBe(HINT)
+  expect(texts.at(-1)?.text).toBe('ctrl+x tab select · ↑↓ move · Enter open/shut · Esc back to prompt')
   expect(texts.at(-1)?.props.dimColor).toBe(true)
   await ui.unmount()
 
-  text = '## 现在\n- [ ] title only\n'
+  text = '## \u73b0\u5728\n- [ ] \u53ea\u6709\u6807\u9898\n'
   const headerOnly = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect((await textsOf(headerOnly)).at(-1)).toBe(HINT)
+  expect((await textsOf(headerOnly)).at(-1)).toBe('ctrl+x tab \u9009\u4e2d · ↑↓ \u79fb\u52a8 · Enter \u5c55\u5f00/\u6536\u8d77 · Esc \u56de\u5230\u8f93\u5165\u6846')
   await headerOnly.unmount()
 
-  text = '## Now\n## Next\n'
+  text = '## \u73b0\u5728\n## \u63a5\u4e0b\u6765\n'
   const plain = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await plain.find({ type: 'Text', text: /ctrl\+x/ })).toBeUndefined()
   await plain.unmount()
@@ -1663,7 +1698,7 @@ test('on the terminal no Button takes a digit or letter key, and the first one t
 })
 
 test('on the terminal a pressable title keeps its weight in Now and its dimness in a parked group', async ($, on) => {
-  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf('## Now\n- [ ] do A：why\n## Maybe\n- [ ] park C：later\n'))
+  on('state.get', { plugin: 'todo-panel', key: 'text' }, textOf('## Now\n- [ ] do A\uff1awhy\n## Maybe\n- [ ] park C\uff1alater\n'))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
   expect((await ui.find({ type: 'Button', text: /^do A$/ }))?.type).toBe('Button')
@@ -1686,7 +1721,7 @@ test('graphical surfaces have no pressable titles and cut no text', async ($, on
 })
 
 test('graphical surfaces keep the plain list, in file order and with no cards', async ($, on) => {
-  on('state.get', textOf('## Now\n- [x] done B\n- [ ] do A：why it matters\n'))
+  on('state.get', textOf('## Now\n- [x] done B\n- [ ] do A\uff1awhy it matters\n'))
 
   for (const surface of GRAPHICAL) {
     const ui = await $.ui.mount({ ...PANE, surface })
@@ -1694,7 +1729,7 @@ test('graphical surfaces keep the plain list, in file order and with no cards', 
     const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
 
     expect(boxes.some(box => box.props.borderStyle !== undefined)).toBe(false)
-    expect(texts.indexOf('done B')).toBeLessThan(texts.indexOf('do A：why it matters'))
+    expect(texts.indexOf('done B')).toBeLessThan(texts.indexOf('do A\uff1awhy it matters'))
     await ui.unmount()
   }
 })
@@ -1797,12 +1832,12 @@ test('the upkeep rules keep an existing list\'s own groups and give the seven gr
   expect(lines.indexOf(template[0] ?? '')).toBe(lines.indexOf(created) + 1)
 })
 
-test('the upkeep rules check a finished item off and move it to the end of Done or 已完成 only when the list has that group', async ($, on) => {
+test('the upkeep rules check a finished item off and move it to the end of Done or \u5df2\u5b8c\u6210 only when the list has that group', async ($, on) => {
   const { lines, lineOf } = await composeRule($, on)
   const finished = lineOf('- When an item is done')
 
   expect(finished).toContain('change it to "- [x]"')
-  expect(finished).toContain('if the list has a Done or 已完成 group, move it to the end of that group')
+  expect(finished).toContain('if the list has a Done or \u5df2\u5b8c\u6210 group, move it to the end of that group')
   expect(finished).toContain('otherwise leave it where it is')
   expect(finished).toContain('unless the project\'s rules say otherwise')
   expect(lines.filter(line => line !== finished && /move .*end of/.test(line))).toEqual([])
@@ -1860,7 +1895,7 @@ test('the current group is accented and parked ones dimmed, under English or old
     value: { value: { shape: 'text-1', value: text }, version: 1 },
   }))
 
-  for (const [current, parked] of [['Now', 'Maybe'], ['现在', '待定']]) {
+  for (const [current, parked] of [['Now', 'Maybe'], ['\u73b0\u5728', '\u5f85\u5b9a']]) {
     text = `## ${current}\n- [ ] A\n## ${parked}\n- [ ] B\n`
     for (const [surface, accent] of [['terminal', 'claude'], ['desktop', 'suggestion']] as const) {
       const ui = await $.ui.mount({ ...PANE, surface })
@@ -1872,17 +1907,17 @@ test('the current group is accented and parked ones dimmed, under English or old
   }
 })
 
-test('a Done group, under the English or the older Chinese heading, is dimmed like Backlog and Maybe, and its done line is English', async ($, on) => {
+test('a Done or \u5df2\u5b8c\u6210 group is dimmed like Backlog and Maybe, and its done items still show', async ($, on) => {
   let text = ''
   on('state.get', { plugin: 'todo-panel', key: 'text' }, () => textOf(text)())
 
-  for (const done of ['Done', '已完成']) {
+  for (const [done, doneLine] of [['Done', '1 done'], ['\u5df2\u5b8c\u6210', '\u5df2\u5b8c\u6210 1 \u9879']] as const) {
     text = `## Now\n- [ ] A\n## ${done}\n- [x] shipped B\n`
     const heading = new RegExp(`^${done}$`)
 
     const terminal = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect((await terminal.find({ type: 'Text', text: heading }))?.props.dimColor).toBe(true)
-    await pressTitle(terminal, /^1 done$/)
+    await pressTitle(terminal, new RegExp(`^${doneLine}$`))
     expect((await terminal.find({ type: 'Text', text: /^shipped B$/ }))?.props.strikethrough).toBe(true)
     await terminal.unmount()
 
@@ -1899,9 +1934,9 @@ test('on the terminal headers and marks take their group color', async ($, on) =
   let text = ''
   on('state.get', () => ({ value: { value: { shape: 'text-1', value: text }, version: 1 } }))
 
-  for (const names of [['Now', 'Issues', 'Ideas', 'Next'], ['现在', '问题', '新想法', '接下来']]) {
+  for (const names of [['Now', 'Issues', 'Ideas', 'Next'], ['\u73b0\u5728', '\u95ee\u9898', '\u65b0\u60f3\u6cd5', '\u63a5\u4e0b\u6765']]) {
     const [now, issues, ideas, next] = names
-    text = `## ${now}\n- [ ] A\n## ${issues}\n- [ ] C：why\n## ${ideas}\n- [ ] D\n## ${next}\n- [ ] E：why\n`
+    text = `## ${now}\n- [ ] A\n## ${issues}\n- [ ] C\uff1awhy\n## ${ideas}\n- [ ] D\n## ${next}\n- [ ] E\uff1awhy\n`
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     const headerColors = await Promise.all(
       names.map(async name => (await ui.find({ type: 'Text', text: new RegExp(`^${name}$`) }))?.props.color),
