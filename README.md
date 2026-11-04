@@ -36,6 +36,7 @@ The desktop app cannot run `/plugin`: click **+** next to the prompt box, choose
 | Create a list when there is none | `/todo`, which writes the six-group template to `docs/todo.md` |
 | Have the conversation add an item | Just say "note that we need to do X" |
 | Close it with a shortcut (CLI) | `ctrl+x x` |
+| Expand or fold a card (CLI) | Press `ctrl+x tab` to focus the pane (Control, on macOS and Linux alike), move to the card's title, press Enter |
 
 When a project already has a list, new sessions open the pane on their own. A terminal narrower than 144 columns does not show it automatically; type `/todo` to open it.
 
@@ -83,6 +84,7 @@ There is no background process and no change to `settings.json`. All the logic i
 
 - **Upkeep is not enforced:** it relies on rules given to the conversation, which may miss an item or forget to check one off.
 - **The format check is narrow:** it only checks entries starting with `-` or `*` written by Write and Edit; writes from Bash, hand edits and plain text lines are not checked.
+- **Mouse clicks need the fullscreen renderer:** the classic terminal renderer does not pass clicks to the pane, so expand cards with the keyboard.
 - **The pane does not edit the list:** pressing a card only folds or unfolds it; to change the list, edit the file or tell the conversation.
 - **The API may change:** the mod API is still early, and a Claude Code update may need changes here.
 
