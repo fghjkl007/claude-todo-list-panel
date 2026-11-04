@@ -1,5 +1,8 @@
 import { atom, read, update } from 'claude-code'
-import type { Color, Elements, Register, Space, StateDollar } from 'claude-code'
+import type { Color, Elements, Register, Space, StateDollar, UiScrollInput } from 'claude-code'
+
+import { DETAIL_NAMES, groupTodo, hasDetails, parseTodo, splitItem } from './parse'
+import type { BodyLine, ItemFields, TodoGroup } from './parse'
 
 const PANE = 'todo-panel'
 const TITLE = 'Todo'
@@ -7,30 +10,53 @@ const TODO_PATH = 'docs/todo.md'
 const POLL_MS = 2000
 // Lists made before the headings were English use the Chinese names, so both count.
 const CURRENT_SECTIONS = ['now', '现在']
-const MUTED_SECTIONS = ['backlog', 'maybe', '待定']
-const TEMPLATE = '## Now\n\n## Next\n\n## Backlog\n\n## Maybe\n\n## Issues\n\n## Ideas\n'
+// A Done group, where a list has one, holds finished items and is dimmed like the parked groups.
+const MUTED_SECTIONS = ['backlog', 'maybe', '待定', 'done', '已完成']
+const TEMPLATE = '## Now\n\n## Next\n\n## Backlog\n\n## Maybe\n\n## Issues\n\n## Ideas\n\n## Done\n'
 // A theme key, not a fixed hex, so the one accent follows light and dark.
 const ACCENT = 'suggestion'
 const SPACING = {
   terminal: { group: 1, item: 0, mark: 1 },
   graphical: { group: 'lg', item: 'xs', mark: 'xs' },
 } as const
-// A card's border plus its padding: done lines start here so their ✓ sits under each card's ○.
+// A card's border plus its padding: a group's done line starts here so its mark sits under each card's.
 const CARD_PADDING = 1
 const CARD_INSET = CARD_PADDING + 1
-// An item written as fields (item｜status｜next step) shows each field on its own line.
-const FIELD_SEPARATOR = /｜| \| /
-// Otherwise the first of these splits an item into a title and a dimmer caption beneath it.
-const CAPTION_SEPARATORS = ['：', ': ', ' — '] as const
+// Done items sit under their done line's words, past its mark and the gap after it.
+const DONE_INSET = CARD_INSET + 2
+const SUMMARY_JOIN = ' · '
 
 const todoText = atom({ plugin: 'todo-panel', key: 'text' } as const, null, {
   shape: 'text-1',
 })
-// The terminal cards pressed open, by item text: a card whose text changes starts closed again.
+// The terminal cards and done lines pressed open, by their Button keys.
 const expandedCards = atom({ plugin: 'todo-panel', key: 'expanded' } as const, [], {
+  shape: 'keys-2',
+})
+// The Button the pane's focus ring is on: its card is drawn selected, and the arrows step from it.
+const focusedKey = atom({ plugin: 'todo-panel', key: 'focused' } as const, null, {
+  shape: 'key-1',
+})
+// The terminal groups folded to their header, by their header Buttons' keys.
+const collapsedGroups = atom({ plugin: 'todo-panel', key: 'collapsed' } as const, [], {
   shape: 'keys-1',
 })
 const CARD_KEY_PREFIX = 'card:'
+const DONE_KEY_PREFIX = 'done:'
+const GROUP_KEY_PREFIX = 'group:'
+// A card's or header's Box is keyed after its Button, so an arrow can bring the whole card into
+// view; a Button key always starts card:, done: or group:, so no Box key can equal one.
+const BOX_KEY_PREFIX = 'box:'
+
+// The words the terminal adds around items, in English whatever language the list is in.
+const LABELS = {
+  status: 'Status: ',
+  next: 'Next: ',
+  note: 'Note: ',
+  source: 'Source: ',
+  done: (count: number) => `${count} done`,
+  hint: 'ctrl+x tab select · ↑↓ move · Enter open/shut · Esc back to prompt',
+} as const
 
 type Host = {
   process: {
@@ -43,86 +69,16 @@ type Host = {
   }
 }
 
-export type TodoLine =
-  | { kind: 'heading'; text: string }
-  | { kind: 'item'; text: string; isDone: boolean; section: string }
-  | { kind: 'text'; text: string; section: string }
-
-export const parseTodo = (source: string): TodoLine[] =>
-  source
-    .split('\n')
-    .filter(line => line.trim() !== '')
-    .reduce<{ section: string; lines: TodoLine[] }>(
-      ({ section, lines }, line) => {
-        const heading = line.match(/^#+\s+(.*)$/)
-        if (heading) {
-          const text = (heading[1] ?? '').trim()
-          return { section: text, lines: [...lines, { kind: 'heading', text }] }
-        }
-        const item = line.match(/^\s*[-*]\s+(?:\[( |x|X)\]\s+)?(.*)$/)
-        const parsed: TodoLine = item
-          ? { kind: 'item', text: item[2] ?? '', isDone: /x/i.test(item[1] ?? ''), section }
-          : { kind: 'text', text: line, section }
-        return { section, lines: [...lines, parsed] }
-      },
-      { section: '', lines: [] },
-    ).lines
-
-type BodyLine = Exclude<TodoLine, { kind: 'heading' }>
-
-export type TodoGroup = { title: string; openCount: number; lines: BodyLine[] }
-
-const isOpen = (line: BodyLine) => line.kind === 'item' && !line.isDone
-
-export const groupTodo = (lines: TodoLine[]): TodoGroup[] =>
-  lines
-    .reduce<{ title: string; lines: BodyLine[] }[]>((groups, line) => {
-      if (line.kind === 'heading') {
-        return [...groups, { title: line.text, lines: [] }]
-      }
-      const last = groups.at(-1) ?? { title: '', lines: [] }
-      return [...groups.slice(0, -1), { ...last, lines: [...last.lines, line] }]
-    }, [])
-    .map(group => ({ ...group, openCount: group.lines.filter(isOpen).length }))
-
 const isNamed = (names: readonly string[], section: string) =>
   names.includes(section.trim().toLowerCase())
 
-export type ItemParts = { title: string; details: readonly string[] }
-
-const splitFields = (text: string): ItemParts | undefined => {
-  const [title, ...details] = text
-    .split(FIELD_SEPARATOR)
-    .map(field => field.trim())
-    .filter(field => field !== '')
-
-  return title !== undefined && details.length > 0 ? { title, details } : undefined
-}
-
-const splitCaption = (text: string): ItemParts => {
-  // Every place a separator occurs, so an empty side at one still lets a later one split.
-  const cuts = CAPTION_SEPARATORS.flatMap(separator =>
-    text.split(separator).slice(1).map((_, index) => {
-      const at = text.split(separator, index + 1).join(separator).length
-      return { at, title: text.slice(0, at).trim(), caption: text.slice(at + separator.length).trim() }
-    }),
-  ).filter(cut => cut.title !== '' && cut.caption !== '')
-  const first = cuts.reduce<(typeof cuts)[number] | undefined>(
-    (best, cut) => (best === undefined || cut.at < best.at ? cut : best),
-    undefined,
-  )
-
-  return first === undefined ? { title: text, details: [] } : { title: first.title, details: [first.caption] }
-}
-
-// Fields win over a caption, so a colon inside a field (问题：…, 来源：…) stays in its field.
-export const splitItem = (text: string): ItemParts => splitFields(text) ?? splitCaption(text)
-
 type Ui = Pick<Elements['desktop'], 'Box' | 'Text' | 'Button'>
 type ItemLine = Extract<BodyLine, { kind: 'item' }>
+type TextLine = Extract<BodyLine, { kind: 'text' }>
 
 const withoutBackticks = (text: string) => text.replaceAll('`', '')
-const isDoneItem = (line: BodyLine) => line.kind === 'item' && line.isDone
+const isItem = (line: BodyLine): line is ItemLine => line.kind === 'item'
+const isDoneItem = (line: BodyLine): line is ItemLine => line.kind === 'item' && line.isDone
 
 // The terminal's colors, theme keys only so they follow light and dark: a group named
 // here colors its header and marks, the others keep the default text color.
@@ -161,80 +117,227 @@ const drawLine = ({ Box, Text }: Ui, line: BodyLine, title: string, markGap: Spa
   )
 }
 
-// Which terminal cards are pressed open, and how a press opens or closes one, by item text.
-type CardToggles = { isExpanded: (text: string) => boolean; toggle: (text: string) => void }
+type Drawn = ReturnType<typeof drawLine>
+
+// A terminal card: the open item, what it says, and the key its title is pressed and focused by.
+type Card = { kind: 'card'; key: string; line: ItemLine; fields: ItemFields }
+// A terminal group: its header's key, folds when it has a title and any items, open or done.
+type TerminalGroup = {
+  group: TodoGroup
+  key: string
+  isFoldable: boolean
+  body: (Card | TextLine)[]
+  doneKey: string
+  done: ItemLine[]
+}
+
+const isCard = (part: Card | TextLine): part is Card => part.kind === 'card'
+
+// Keys that tell lines of the same text apart by how many came before, so each opens on its own
+// and keeps its key while lines around it are added, moved or checked off.
+const occurrenceKeys = (prefix: string, names: readonly string[]) =>
+  names.map((name, index) => `${prefix}${names.slice(0, index).filter(other => other === name).length}:${name}`)
+
+export const terminalGroups = (text: string): TerminalGroup[] => {
+  const groups = groupTodo(parseTodo(text))
+  const items = groups.flatMap(group => group.lines.filter(isItem))
+  const itemKeys = occurrenceKeys(CARD_KEY_PREFIX, items.map(item => item.text))
+  const keyOf = new Map(items.map((item, index) => [item, itemKeys[index] ?? ''] as const))
+  const titles = groups.map(group => group.title)
+  const doneKeys = occurrenceKeys(DONE_KEY_PREFIX, titles)
+  const groupKeys = occurrenceKeys(GROUP_KEY_PREFIX, titles)
+
+  return groups.map((group, index) => ({
+    group,
+    key: groupKeys[index] ?? '',
+    isFoldable: group.title !== '' && group.lines.some(isItem),
+    body: group.lines
+      // A plain boolean: an inferred predicate would wrongly drop open items from the type.
+      .filter((line): boolean => !isDoneItem(line))
+      .map(line =>
+        isItem(line)
+          ? { kind: 'card', key: keyOf.get(line) ?? '', line, fields: splitItem(withoutBackticks(line.text)) }
+          : line,
+      ),
+    doneKey: doneKeys[index] ?? '',
+    done: group.lines.filter(isDoneItem),
+  }))
+}
+
+const isFolded = (group: TerminalGroup, collapsed: readonly string[]) =>
+  group.isFoldable && collapsed.includes(group.key)
+
+// Every Button the terminal draws, in the order drawn: the arrows step along it. A folded group
+// draws its header alone.
+const pressableKeys = (groups: readonly TerminalGroup[], collapsed: readonly string[]) =>
+  groups.flatMap(group => {
+    const header = group.isFoldable ? [group.key] : []
+    if (isFolded(group, collapsed)) return header
+
+    return [
+      ...header,
+      ...group.body.filter(isCard).filter(card => hasDetails(card.fields)).map(card => card.key),
+      ...(group.done.length > 0 ? [group.doneKey] : []),
+    ]
+  })
+
+type MoveResult = { deny?: string }
+type RevealHost = {
+  ui: { scroll: (args: { in: string; to: { key: string } }) => Promise<MoveResult> }
+}
+type FocusHost = RevealHost & { ui: { focus: (args: { requestId: string; key: string }) => Promise<MoveResult> } }
+
+const refusal = (error: unknown): MoveResult => ({ deny: String(error) })
+
+// Brings the whole card or done list a Button heads into view (the Button alone when it heads
+// none), as far as the pane's rows allow: its top first, moving the window no more than it must.
+const reveal = async ($: RevealHost, key: string) => {
+  const shown = await $.ui.scroll({ in: PANE, to: { key: `${BOX_KEY_PREFIX}${key}` } }).catch(refusal)
+  if (shown.deny !== undefined) await $.ui.scroll({ in: PANE, to: { key } }).catch(refusal)
+}
+
+// What the terminal's drawing reads beyond the list: the focused key, what is open or folded.
+type TerminalView = {
+  selected: string | null
+  firstKey: string | undefined
+  isOpen: (key: string) => boolean
+  isFolded: (group: TerminalGroup) => boolean
+  toggle: (key: string) => void
+  fold: (key: string) => void
+}
 type ToggleHost = StateDollar & { ui: { log: (text: string) => void } }
 
-const toggled = (texts: readonly string[], text: string) =>
-  texts.includes(text) ? texts.filter(one => one !== text) : [...texts, text]
+const toggled = (keys: readonly string[], key: string) =>
+  keys.includes(key) ? keys.filter(one => one !== key) : [...keys, key]
 
-const cardTogglesFor = async ($: ToggleHost): Promise<CardToggles> => {
+const terminalViewFor = async (
+  $: ToggleHost,
+  groups: readonly TerminalGroup[],
+  isFocused: boolean,
+): Promise<TerminalView> => {
   const expanded = await read($, expandedCards)
+  const focused = await read($, focusedKey)
+  const collapsed = await read($, collapsedGroups)
+  const logError = (error: unknown) => $.ui.log(`todo-panel: ${String(error)}`)
 
+  // Opening or shutting a card, or folding a group, leaves the window where it is.
   return {
-    isExpanded: text => expanded.includes(text),
-    toggle: text => {
-      update($, expandedCards, texts => toggled(texts, text)).catch(error =>
-        $.ui.log(`todo-panel: ${String(error)}`),
-      )
-    },
+    selected: isFocused ? focused : null,
+    firstKey: pressableKeys(groups, collapsed)[0],
+    isOpen: key => expanded.includes(key),
+    isFolded: group => isFolded(group, collapsed),
+    toggle: key => void update($, expandedCards, opened => toggled(opened, key)).catch(logError),
+    fold: key => void update($, collapsedGroups, folded => toggled(folded, key)).catch(logError),
   }
 }
 
-// A card's title, pressable only when it has details to open, so every press does something.
-const drawCardTitle = ({ Button, Text }: Ui, line: ItemLine, parts: ItemParts, title: string, cards: CardToggles) => {
+// A mark in a column of its own, so a title that wraps never pushes it out.
+const drawMark = ({ Box, Text }: Ui, mark: string, color: Color | undefined, isDim: boolean) => (
+  <Box flexShrink={0}>
+    <Text color={color} dimColor={isDim}>
+      {mark}
+    </Text>
+  </Box>
+)
+
+const markOf = (isOpenable: boolean, isOpen: boolean) => (!isOpenable ? '○' : isOpen ? '▾' : '▸')
+
+// The first Button takes the focus ring when the pane takes the keyboard, so Enter acts at once.
+const autoFocusOf = (key: string, view: TerminalView) => (key === view.firstKey ? true : undefined)
+
+// Shut, a card shows its status and next step on one row, or its note when it has neither.
+const summaryOf = (fields: ItemFields) => {
+  const nextStep = fields.next === undefined ? undefined : `${LABELS.next}${fields.next}`
+  const line = [fields.status, nextStep].filter(part => part !== undefined).join(SUMMARY_JOIN)
+
+  return line === '' ? fields.note : line
+}
+
+// Open, each field it has on a labeled line wrapped in full, its wrapped rows indented past the label.
+const drawDetails = ({ Box, Text }: Ui, fields: ItemFields, isMuted: boolean) =>
+  DETAIL_NAMES.flatMap(name => {
+    const value = fields[name]
+    if (value === undefined) return []
+
+    return [
+      <Box flexDirection="row">
+        <Box flexShrink={0}>
+          <Text dimColor>{LABELS[name]}</Text>
+        </Box>
+        <Box flexShrink={1}>
+          <Text dimColor={isMuted} wrap="wrap">
+            {value}
+          </Text>
+        </Box>
+      </Box>,
+    ]
+  })
+
+// A card's title, a Button only when the card has more to show, so every press does something.
+const drawCardTitle = ({ Button, Text }: Ui, card: Card, title: string, view: TerminalView) => {
   const isCurrent = isNamed(CURRENT_SECTIONS, title)
   const label = (
     <Text dimColor={isNamed(MUTED_SECTIONS, title)} weight={isCurrent ? 'medium' : undefined}>
-      {parts.title}
+      {card.fields.title}
     </Text>
   )
-  if (parts.details.length === 0) return label
+  if (!hasDetails(card.fields)) return label
 
   return (
-    <Button key={`${CARD_KEY_PREFIX}${line.text}`} plain onPress={() => cards.toggle(line.text)}>
+    <Button key={card.key} plain autoFocus={autoFocusOf(card.key, view)} onPress={() => view.toggle(card.key)}>
       {label}
     </Button>
   )
 }
 
-// The terminal's card: a rounded box with the open mark, the title, and any details beneath,
-// each cut to one row until the title is pressed. Every border is gray but Now's, so the one
-// bright border marks the work in progress.
-const drawCard = (ui: Ui, line: ItemLine, title: string, cards: CardToggles) => {
-  const { Box, Text } = ui
+// Every border is gray but Now's; the card under the focus ring is bold in the accent color, which
+// shows where Enter acts whether the card is open or shut.
+const cardBorder = (title: string, isSelected: boolean) => {
+  if (isSelected) return { borderStyle: 'bold', borderColor: ACCENT, borderDimColor: false } as const
   const isCurrent = isNamed(CURRENT_SECTIONS, title)
+
+  return {
+    borderStyle: 'round',
+    borderColor: isCurrent ? terminalColorOf(title) : undefined,
+    borderDimColor: !isCurrent,
+  } as const
+}
+
+// The terminal's card: its mark (▸ shut, ▾ open, ○ nothing more to show), its title, and beneath
+// either one cut row or every field in full.
+const drawCard = (ui: Ui, card: Card, title: string, view: TerminalView) => {
+  const { Box, Text } = ui
   const isMuted = isNamed(MUTED_SECTIONS, title)
-  const parts = splitItem(withoutBackticks(line.text))
-  const detailWrap = cards.isExpanded(line.text) ? 'wrap' : 'truncate-end'
+  const isOpenable = hasDetails(card.fields)
+  const isOpen = isOpenable && view.isOpen(card.key)
+  const summary = summaryOf(card.fields)
 
   return (
     <Box
+      key={`${BOX_KEY_PREFIX}${card.key}`}
       flexDirection="row"
       gap={SPACING.terminal.mark}
-      borderStyle="round"
-      borderColor={isCurrent ? terminalColorOf(title) : undefined}
-      borderDimColor={!isCurrent}
       paddingX={CARD_PADDING}
+      {...cardBorder(title, view.selected === card.key)}
     >
-      <Text color={terminalColorOf(title)} dimColor={isMuted}>
-        ○
-      </Text>
+      {drawMark(ui, markOf(isOpenable, isOpen), terminalColorOf(title), isMuted)}
       <Box flexDirection="column" flexShrink={1}>
-        {drawCardTitle(ui, line, parts, title, cards)}
-        {parts.details.map(detail => (
-          <Text dimColor wrap={detailWrap}>
-            {detail}
-          </Text>
-        ))}
+        {drawCardTitle(ui, card, title, view)}
+        {isOpen
+          ? drawDetails(ui, card.fields, isMuted)
+          : summary !== undefined && (
+              <Text dimColor wrap="truncate-end">
+                {summary}
+              </Text>
+            )}
       </Box>
     </Box>
   )
 }
 
-// A done item on the terminal: a green ✓ under the cards' ○, the text dimmed and struck through.
+// A done item: a green ✓, the text dimmed and struck through.
 const drawDoneLine = ({ Box, Text }: Ui, line: ItemLine) => (
-  <Box flexDirection="row" gap={SPACING.terminal.mark} paddingLeft={CARD_INSET}>
+  <Box flexDirection="row" gap={SPACING.terminal.mark} paddingLeft={DONE_INSET}>
     <Text color={DONE_COLOR}>✓</Text>
     <Box flexShrink={1}>
       <Text dimColor strikethrough>
@@ -244,43 +347,64 @@ const drawDoneLine = ({ Box, Text }: Ui, line: ItemLine) => (
   </Box>
 )
 
-type DrawLines = (ui: Ui, lines: BodyLine[], title: string) => ReturnType<typeof drawLine>[]
-type SurfaceStyle = { drawLines: DrawLines; headerColor: (title: string) => Color | undefined }
+// A group's done items fold into one line saying how many, pressed open and shut like a card.
+const drawDoneList = (ui: Ui, group: TerminalGroup, view: TerminalView): Drawn[] => {
+  const { Box, Button, Text } = ui
+  if (group.done.length === 0) return []
+  const isOpen = view.isOpen(group.doneKey)
+  const header = (
+    <Box flexDirection="row" gap={SPACING.terminal.mark} paddingLeft={CARD_INSET}>
+      {drawMark(ui, isOpen ? '▾' : '▸', undefined, true)}
+      <Button
+        key={group.doneKey}
+        plain
+        autoFocus={autoFocusOf(group.doneKey, view)}
+        onPress={() => view.toggle(group.doneKey)}
+      >
+        <Text dimColor>{LABELS.done(group.done.length)}</Text>
+      </Button>
+    </Box>
+  )
 
-// Open items as cards, then the done ones as plain lines, as a completed list sits below.
-const terminalStyle = (cards: CardToggles): SurfaceStyle => ({
-  drawLines: (ui, lines, title) =>
-    [...lines.filter(line => !isDoneItem(line)), ...lines.filter(isDoneItem)].map(line => {
-      if (line.kind === 'text') return drawLine(ui, line, title, SPACING.terminal.mark)
-      return line.isDone ? drawDoneLine(ui, line) : drawCard(ui, line, title, cards)
-    }),
-  headerColor: terminalColorOf,
-})
-
-const GRAPHICAL_STYLE: SurfaceStyle = {
-  drawLines: (ui, lines, title) => lines.map(line => drawLine(ui, line, title, SPACING.graphical.mark)),
-  headerColor: title => (isNamed(CURRENT_SECTIONS, title) ? ACCENT : undefined),
+  return [
+    <Box key={`${BOX_KEY_PREFIX}${group.doneKey}`} flexDirection="column">
+      {header}
+      {isOpen && group.done.map(line => drawDoneLine(ui, line))}
+    </Box>,
+  ]
 }
 
-const drawGroup = (ui: Ui, group: TodoGroup, itemGap: Space, style: SurfaceStyle) => {
+// How a group's title is drawn: its group's color, dimmed when parked; selected, in the accent.
+type TitleLook = { color: Color | undefined; weight: 'semibold' | 'bold'; dimColor: boolean }
+
+const restingLook = (title: string, color: Color | undefined): TitleLook => ({
+  color,
+  weight: 'semibold',
+  dimColor: isNamed(MUTED_SECTIONS, title),
+})
+const SELECTED_LOOK: TitleLook = { color: ACCENT, weight: 'bold', dimColor: false }
+
+const drawTitle = ({ Text }: Ui, title: string, look: TitleLook) => (
+  <Text size="footnote" {...look}>
+    {title}
+  </Text>
+)
+
+// A header's left side (its title, and on the terminal a fold mark), and its count on the right, if any.
+type GroupHeader = { head: Drawn; count: string | undefined }
+
+
+const drawGroup = (ui: Ui, group: TodoGroup, itemGap: Space, header: GroupHeader, body: Drawn[]) => {
   const { Box, Text } = ui
-  const isDim = isNamed(MUTED_SECTIONS, group.title)
 
   return (
     <Box flexDirection="column" gap={itemGap}>
       {group.title !== '' && (
         <Box flexDirection="row" justifyContent="space-between">
-          <Text
-            size="footnote"
-            weight="semibold"
-            color={style.headerColor(group.title)}
-            dimColor={isDim}
-          >
-            {group.title}
-          </Text>
-          {group.openCount > 0 && (
+          {header.head}
+          {header.count !== undefined && (
             <Text size="footnote" tabular dimColor>
-              {String(group.openCount)}
+              {header.count}
             </Text>
           )}
         </Box>
@@ -290,29 +414,135 @@ const drawGroup = (ui: Ui, group: TodoGroup, itemGap: Space, style: SurfaceStyle
           Nothing yet
         </Text>
       ) : (
-        style.drawLines(ui, group.lines, group.title)
+        body
       )}
     </Box>
   )
+}
+
+// The terminal's header: a group with items gets a fold mark (▾ unfolded, ▸ folded) and its title
+// as a Button; an empty one its title alone. Selected, mark and title take the accent.
+const drawTerminalHead = (ui: Ui, group: TerminalGroup, view: TerminalView) => {
+  const { Box, Button } = ui
+  const { title } = group.group
+  const look = view.selected === group.key ? SELECTED_LOOK : restingLook(title, terminalColorOf(title))
+  if (!group.isFoldable) return drawTitle(ui, title, look)
+
+  return (
+    <Box key={`${BOX_KEY_PREFIX}${group.key}`} flexDirection="row" gap={SPACING.terminal.mark} flexShrink={1}>
+      {drawMark(ui, view.isFolded(group) ? '▸' : '▾', look.color, look.dimColor)}
+      <Button key={group.key} plain autoFocus={autoFocusOf(group.key, view)} onPress={() => view.fold(group.key)}>
+        {drawTitle(ui, title, look)}
+      </Button>
+    </Box>
+  )
+}
+
+// The terminal: open items as cards with text lines in between, then each group's done line (a
+// folded group its header alone), and a key hint at the bottom while there is anything to press.
+const drawTerminal = (ui: Ui, groups: readonly TerminalGroup[], view: TerminalView) => {
+  const { Box, Text } = ui
+  // Every header counts what is left to do, a bare number folded or not: 0 once all is done or it is empty.
+  const headerOf = (group: TerminalGroup) => ({
+    head: drawTerminalHead(ui, group, view),
+    count: String(group.group.openCount),
+  })
+  const bodyOf = (group: TerminalGroup) =>
+    view.isFolded(group)
+      ? []
+      : [
+          ...group.body.map(part =>
+            isCard(part)
+              ? drawCard(ui, part, group.group.title, view)
+              : drawLine(ui, part, group.group.title, SPACING.terminal.mark),
+          ),
+          ...drawDoneList(ui, group, view),
+        ]
+
+  return (
+    <Box flexDirection="column" gap={SPACING.terminal.group}>
+      {groups.map(group => drawGroup(ui, group.group, SPACING.terminal.item, headerOf(group), bodyOf(group)))}
+      {view.firstKey !== undefined && (
+        <Text size="footnote" dimColor>
+          {LABELS.hint}
+        </Text>
+      )}
+    </Box>
+  )
+}
+
+// Graphical surfaces keep the flat list, in file order, with nothing to fold; a header counts its
+// open items, and says nothing when it has none open.
+const drawGraphical = (ui: Ui, text: string) => {
+  const { Box } = ui
+  const headerOf = (group: TodoGroup) => {
+    const color = isNamed(CURRENT_SECTIONS, group.title) ? ACCENT : undefined
+    const count = group.openCount > 0 ? String(group.openCount) : undefined
+    return { head: drawTitle(ui, group.title, restingLook(group.title, color)), count }
+  }
+
+  return (
+    <Box flexDirection="column" gap={SPACING.graphical.group}>
+      {groupTodo(parseTodo(text)).map(group =>
+        drawGroup(
+          ui,
+          group,
+          SPACING.graphical.item,
+          headerOf(group),
+          group.lines.map(line => drawLine(ui, line, group.title, SPACING.graphical.mark)),
+        ),
+      )}
+    </Box>
+  )
+}
+
+// The terminal's Buttons for a list with the given groups folded, in the order drawn.
+export const pressableKeysOf = (text: string, collapsed: readonly string[] = []) =>
+  pressableKeys(terminalGroups(text), collapsed)
+
+// An arrow key a person pressed: a one-row move with no pointer, which a wheel tick would carry.
+const isArrow = (e: Pick<UiScrollInput, 'origin' | 'pointer' | 'by'>) =>
+  e.origin.kind === 'person' && e.pointer === undefined && Math.abs(e.by) === 1
+
+// Where an arrow moves the focus ring: the Button one step from the focused one. None for the wheel
+// or a page key, past either end, or with no Button of the list under the ring: those scroll.
+export const arrowTarget = (
+  keys: readonly string[],
+  focused: string | null,
+  e: Pick<UiScrollInput, 'origin' | 'pointer' | 'by'>,
+) => {
+  const at = focused === null ? -1 : keys.indexOf(focused)
+  return isArrow(e) && at !== -1 ? keys[at + Math.sign(e.by)] : undefined
+}
+
+// Moves the ring onto the Button and brings what it heads into view; the ui.focus hook reveals it
+// too, a second `nearest` that moves nothing. The scroll this raises is the plugin's, not an arrow,
+// so the ui.scroll hook passes it on. A move the surface refuses says why, and the arrow then
+// scrolls instead.
+const moveFocus = async ($: FocusHost, key: string): Promise<MoveResult> => {
+  const moved = await $.ui.focus({ requestId: PANE, key }).catch(refusal)
+  if (moved.deny === undefined) await reveal($, key)
+  return moved
 }
 
 const ruleFor = (path: string) =>
   [
     `# Project todo list`,
     `This project's todo list is ${path}. Every conversation shares it, and the user watches it live in a pane.`,
-    `Write each entry as "- [ ] item", saying what it is and why it matters, clearly enough for someone who has not read the conversation. Use six groups:`,
-    `- ## Now: what is being worked on.`,
+    `Write each entry as "- [ ] item", saying what it is and why it matters, clearly enough for someone who has not read the conversation.`,
+    `If the file exists, keep its own groups and follow the project's own rules for the list (CLAUDE.md, AGENTS.md and the like): put each item in the group that fits, never add groups it lacks, and never re-sort items into the groups below.`,
+    `If the file does not exist, create it the first time an item comes up, with this default template of seven groups:`,
+    `- ## Now: what is being worked on; move an item here when starting it.`,
     `- ## Next: confirmed work that has not started yet.`,
     `- ## Backlog: confirmed as worth doing, but deliberately left for later.`,
     `- ## Maybe: understood, but not yet decided whether to do it.`,
-    `- ## Issues: bugs found or problems not yet solved; change to "- [x]" once solved.`,
+    `- ## Issues: bugs found or problems not yet solved.`,
     `- ## Ideas: unverified ideas, recorded as stated and not treated as confirmed; once checked, move to "Next" if it will be done, or delete it if not.`,
+    `- ## Done: finished items, newest last.`,
     `How to keep it up to date:`,
     `- At the start of a conversation, read the list to see what is in progress.`,
-    `- When a new item or decision comes up, write it into the group that fits the definitions above.`,
-    `- Move an item to "Now" when starting it, change it to "- [x]" when done, and delete the line if it is dropped.`,
-    `- If the file does not exist, create it with these six groups the first time an item comes up; if an existing file lacks a group, add the group when there is something to write in it.`,
-    `- Lists made by older versions use Chinese headings (现在, 接下来, Backlog, 待定, 问题, 新想法 for Now, Next, Backlog, Maybe, Issues, Ideas); keep a file's existing headings rather than adding English duplicates.`,
+    `- When a new item or decision comes up, write it into the group that fits.`,
+    `- When an item is done, change it to "- [x]"; if the list has a Done or 已完成 group, move it to the end of that group, otherwise leave it where it is, unless the project's rules say otherwise. Delete the line if it is dropped.`,
     `- Change only the relevant lines, and re-read the file before each change: another conversation may have just edited it.`,
   ].join('\n')
 
@@ -410,23 +640,47 @@ export const register: Register = on => {
     return { ...context, blocks: [...context.blocks, { name: 'todoList', text }] }
   })
 
+  // Where the pane's focus ring lands (Tab, an arrow, a click, the first Button taking it), kept so
+  // the card or header under it is drawn selected and the arrows know where to step from.
+  on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    const moved = await next(e)
+    if (moved.deny !== undefined) return moved
+    await update($, focusedKey, () => e.element ?? null).catch(error =>
+      $.ui.log(`todo-panel: ${String(error)}`),
+    )
+    if (e.element !== undefined) await reveal($, e.element)
+    return moved
+  })
+
+  // The up and down arrows step the focus ring from Button to Button (header, card, done line) and
+  // bring it into view; the wheel, the page keys, and an arrow past the first or last Button or
+  // with none under the ring scroll as before.
+  on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    if (!isArrow(e)) return next(e)
+    const focused = await read($, focusedKey)
+    if (focused === null) return next(e)
+    const text = await read($, todoText)
+    const keys = text === null ? [] : pressableKeysOf(text, await read($, collapsedGroups))
+    const target = arrowTarget(keys, focused, e)
+    if (target === undefined) return next(e)
+
+    const moved = await moveFocus($, target)
+    if (moved.deny !== undefined) return next(e)
+    await update($, focusedKey, () => target).catch(error => $.ui.log(`todo-panel: ${String(error)}`))
+    return {}
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
+    const ui = { Box, Text, Button }
     const text = await read($, todoText)
     if (text === null) {
       return <Text dimColor>No list yet. Type /todo to create one.</Text>
     }
+    if (e.surface !== 'terminal') return drawGraphical(ui, text)
 
-    const isTerminal = e.surface === 'terminal'
-    const space = isTerminal ? SPACING.terminal : SPACING.graphical
-    const style = isTerminal ? terminalStyle(await cardTogglesFor($)) : GRAPHICAL_STYLE
-
-    return (
-      <Box flexDirection="column" gap={space.group}>
-        {groupTodo(parseTodo(text)).map(group =>
-          drawGroup({ Box, Text, Button }, group, space.item, style),
-        )}
-      </Box>
-    )
+    const groups = terminalGroups(text)
+    const view = await terminalViewFor($, groups, e.props.isFocused)
+    return drawTerminal(ui, groups, view)
   })
 }

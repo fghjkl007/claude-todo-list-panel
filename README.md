@@ -4,10 +4,11 @@ A project todo pane for Claude Code. Every conversation in a project shares one 
 
 ## Features
 
-- **Six groups:** Now, Next, Backlog, Maybe, Issues and Ideas. "Now" uses the accent color, Backlog and Maybe are dimmed, and finished items show `✓` and are struck through.
-- **Cards in the terminal:** in the CLI each open item is a rounded card, in the style of Microsoft To Do, with any detail after the first colon (`：` or `: `) or ` — ` shown as a dimmer caption beneath the title. An item written as fields, `item｜status｜next step`, shows the item as the title and each field on its own dimmer line. Each detail line is cut to one row; press a card's title to show that card's details in full, and press it again to fold them. Only Now's cards have a colored (brand orange) border; Issues headers and marks are red, Ideas purple. Finished items follow as compact lines below the cards with a green `✓`.
+- **Seven groups for a new list:** a list is created with Now, Next, Backlog, Maybe, Issues, Ideas and Done. A list that already exists keeps its own groups and the project's own rules for them (CLAUDE.md, AGENTS.md): conversations never add the groups it lacks or re-sort its items into these seven. "Now" uses the accent color, Backlog, Maybe and Done are dimmed, and finished items show `✓` and are struck through.
+- **Cards in the terminal:** in the CLI each open item is a rounded card, in the style of Microsoft To Do. An item written as fields, `item｜status｜next step (source: …)`, is read by position (the bar is full-width, or ` | ` with spaces; the source bracket is optional, and the older Chinese form of it in full-width brackets is read too); an older `title：note` (or `: `, ` — `) item gives a title and a note. A shut card shows `▸ title` and one dim row, `status · Next: next step` cut with `…` (the note when there is neither); open (`▾`), it shows each field it has on its own labeled line (`Status:`, `Next:`, `Note:`, `Source:`), wrapped in full. A missing field is left out, never guessed. A card with nothing more to show keeps `○` and cannot be opened. Labels, done lines and the key hint are always in English, whatever language the list is written in. Only Now's cards have a colored (brand orange) border; Issues headers and marks are red, Ideas purple. Each group header shows only how many items are left to do, as a bare number on the right (`4`), folded or not; a group with everything done, or nothing in it, shows `0`. Its finished items fold into one `▸ N done` line that opens to green `✓` lines.
+- **Fold a whole group (CLI):** a group with any items has `▾` before its title; pressing the title folds it to that one row (`▸ Now … 2`), and the next group follows right below. A folded header shows the same bare count as an unfolded one, `0` included. Pressing it again unfolds it, with the same cards open as before. Folded groups stay folded through redraws and changes to the file, and a new session starts with every group unfolded. An empty group keeps a plain title and cannot be folded. The desktop app, VS Code and mobile keep the flat list.
 - **Shared across conversations:** every conversation in a project reads and writes the same file; in a git worktree they use the main worktree's copy.
-- **Kept up to date by the conversations:** each conversation gets the upkeep rules and the current list, adds new items as they come up, and checks them off when they are done.
+- **Kept up to date by the conversations:** each conversation gets the upkeep rules and the current list, adds new items to the group that fits, and when one is done checks it off; if the list has a Done group (under the English or the older Chinese heading) the item moves to its end, otherwise it stays where it is, unless the project's rules say otherwise.
 - **Format check:** an entry missing its `[ ]`, written with Write or Edit, is refused with a note on how to fix it.
 
 ## Install
@@ -33,10 +34,10 @@ The desktop app cannot run `/plugin`: click **+** next to the prompt box, choose
 | To | Do |
 |---|---|
 | Open or close the pane | `/todo` |
-| Create a list when there is none | `/todo`, which writes the six-group template to `docs/todo.md` |
+| Create a list when there is none | `/todo`, which writes the seven-group template to `docs/todo.md` |
 | Have the conversation add an item | Just say "note that we need to do X" |
 | Close it with a shortcut (CLI) | `ctrl+x x` |
-| Expand or fold a card (CLI) | Press `ctrl+x tab` to focus the pane (Control, on macOS and Linux alike), move to the card's title, press Enter |
+| Open or shut a card, fold a group (CLI) | `ctrl+x tab` gives the pane the keyboard (Control, on macOS and Linux alike) and selects the first group title, drawn in blue; `↑` `↓` (or Tab) move between group titles, cards and done lines, skipping the cards of a folded group. A selected card gets a bold blue border. Enter folds or unfolds the selected group, or opens or shuts the selected card or done line; the pane does not scroll when it does. Esc returns to the prompt. A short hint at the bottom of the pane says the same. |
 
 When a project already has a list, new sessions open the pane on their own. A terminal narrower than 144 columns does not show it automatically; type `/todo` to open it.
 
@@ -45,7 +46,6 @@ When a project already has a list, new sessions open the pane on their own. A te
 ```markdown
 ## Now
 - [ ] What is being worked on
-- [x] What is done
 
 ## Next
 - [ ] Confirmed work that has not started yet
@@ -61,15 +61,20 @@ When a project already has a list, new sessions open the pane on their own. A te
 
 ## Ideas
 - [ ] An unverified idea, recorded as stated
+
+## Done
+- [x] A finished item, checked off and moved to the end of this group
 ```
+
+This is the template for a new list only; an existing list keeps the groups it has.
 
 A hand-written `- item` also shows as an open item.
 
-Lists made by earlier versions use the Chinese headings 现在, 接下来, Backlog, 待定, 问题 and 新想法. They still display, with 现在 accented and 待定 dimmed, and conversations keep those headings instead of adding English ones.
+Lists made by earlier versions use Chinese headings: `现在` (Now), `接下来` (Next), `待定` (Maybe), `问题` (Issues), `新想法` (Ideas) and `已完成` (Done), with Backlog in English. They still display, with the Chinese Now heading accented, Issues and Ideas in their colors, and Maybe and Done dimmed; the pane's labels stay English. Conversations keep those headings instead of adding English ones or any missing groups.
 
 ## How it works
 
-There is no background process and no change to `settings.json`. All the logic is in [`mods/todo-panel/hooks/register.tsx`](mods/todo-panel/hooks/register.tsx), built on the mod's hooks:
+There is no background process and no change to `settings.json`. The hooks and the drawing are in [`mods/todo-panel/hooks/register.tsx`](mods/todo-panel/hooks/register.tsx), and reading the list (groups, items and their fields) is in [`mods/todo-panel/hooks/parse.ts`](mods/todo-panel/hooks/parse.ts). The mod is built on these hooks:
 
 | Event | What it does |
 |---|---|
@@ -84,8 +89,10 @@ There is no background process and no change to `settings.json`. All the logic i
 
 - **Upkeep is not enforced:** it relies on rules given to the conversation, which may miss an item or forget to check one off.
 - **The format check is narrow:** it only checks entries starting with `-` or `*` written by Write and Edit; writes from Bash, hand edits and plain text lines are not checked.
-- **Mouse clicks need the fullscreen renderer:** the classic terminal renderer does not pass clicks to the pane, so expand cards with the keyboard.
-- **The pane does not edit the list:** pressing a card only folds or unfolds it; to change the list, edit the file or tell the conversation.
+- **Mouse clicks need the fullscreen renderer:** the classic terminal renderer does not pass clicks to the pane, so open cards with the keyboard. Clicks were not tested in this version.
+- **Open cards and folded groups last for the session:** they stay as they are through redraws and changes to the file, and a new session starts with cards shut and groups unfolded. Two items (or two groups) with the same text are told apart by their order, so adding or deleting one of them can shift which of them is open or folded.
+- **The arrows move between group titles, cards and done lines only while one is selected:** with the selection on the pane's close mark, or past the first or last of them, the arrow is left to Claude Code, which scrolls the pane; when the whole list fits and there is nothing to scroll, it can move the selection back to the first group title instead.
+- **The pane does not edit the list:** pressing a card only opens or shuts it; to change the list, edit the file or tell the conversation.
 - **The API may change:** the mod API is still early, and a Claude Code update may need changes here.
 
 ## Development
